@@ -1,4 +1,9 @@
-use std::{env, fs::File, io::{Read, Write}};
+use std::{
+    env,
+    fs::File,
+    io::{Read, Write},
+    os::unix::fs::PermissionsExt,
+};
 
 use anyhow::{Context, Result, anyhow, bail};
 use archive::{ArchiveExtractor, ArchiveFormat};
@@ -16,7 +21,6 @@ struct GitHubRelease {
 #[derive(Deserialize)]
 struct ReleaseAsset {
     name: String,
-    content_type: String,
     browser_download_url: String,
 }
 
@@ -24,13 +28,20 @@ impl GitHubRelease {
     fn get_asset_for_current_platform(&self) -> Result<&ReleaseAsset> {
         let os_name = match env::consts::OS {
             "linux" => "linux",
-            "macos" | "apple" => "darwin",
-            "windows" => "windows",
+            "macos" => "darwin",
             os => bail!("unsupported operating system: {os}"),
         };
 
+        let arch_name = match env::consts::ARCH {
+            "x86_64" => "x86_64",
+            "aarch64" => "arm64",
+            arch => bail!("unsupported architecture: {arch}"),
+        };
+
         for asset in &self.assets {
-            if asset.name.to_lowercase().contains(os_name) {
+            let asset_name = asset.name.to_lowercase();
+
+            if asset_name.contains(os_name) && asset_name.contains(arch_name) {
                 if !asset.name.ends_with(".tar.gz") {
                     bail!("Asset {} does not end with .tar.gz", asset.name);
                 }
@@ -103,11 +114,20 @@ fn download_binary_from_release(release: &GitHubRelease) -> Result<()> {
         .extract(&response_body, ArchiveFormat::TarGz)
         .context("Failed to extract immich-go binary")?;
 
-    let Some(immich_go_binary) = files.iter().find(|f| f.path.starts_with("immich-go")) else {
+    let Some(immich_go_data) = files.iter().find(|f| f.path.starts_with("immich-go")) else {
         bail!("Downloaded asset does not contain immich-go binary");
     };
 
-    File::create_new(&immich_go_binary.path).context(format!("Failed creating file {}", immich_go_binary.path))?.write(&immich_go_binary.data).context(format!("Failed writing file {}", immich_go_binary.path))?;
+    let mut immich_go_file = File::create(&immich_go_data.path)
+        .context(format!("Failed creating file {}", immich_go_data.path))?;
+
+    immich_go_file
+        .write(&immich_go_data.data)
+        .context(format!("Failed writing file {}", immich_go_data.path))?;
+
+    let mut immich_go_file_perms = immich_go_file.metadata()?.permissions();
+    immich_go_file_perms.set_mode(immich_go_file_perms.mode() | 0o111);
+    immich_go_file.set_permissions(immich_go_file_perms)?;
 
     Ok(())
 }
