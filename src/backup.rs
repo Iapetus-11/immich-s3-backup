@@ -2,8 +2,9 @@ use std::{env, path::Path, process::Command};
 
 use anyhow::{Context, Result};
 
-pub fn backup() -> Result<i32> {
-    let server_url = env::var("IMMICH_SERVER_URL").context("Failed to get env var IMMICH_SERVER_URL")?;
+pub fn backup() -> Result<()> {
+    let server_url =
+        env::var("IMMICH_SERVER_URL").context("Failed to get env var IMMICH_SERVER_URL")?;
     let api_key = env::var("IMMICH_API_KEY").context("Failed to get env var IMMICH_API_KEY")?;
 
     let use_local_executable = Path::new("immich-go").exists();
@@ -19,5 +20,9 @@ pub fn backup() -> Result<i32> {
         .arg(format!("--from-api-key={api_key}"))
         .arg("--write-to-folder=./backup")
         .output()
-        .context("Failed executing");
+        .context("Failed executing: immich-go archive from-immich");
+
+    todo!();
+
+    Ok(())
 }

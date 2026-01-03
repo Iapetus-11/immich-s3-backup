@@ -1,15 +1,15 @@
 use std::{
     env,
-    fs::File,
+    fs::{self, File},
     io::{Read, Write},
-    os::unix::fs::PermissionsExt,
 };
 
 use anyhow::{Context, Result, anyhow, bail};
-use archive::{ArchiveExtractor, ArchiveFormat};
 use serde::Deserialize;
-use ureq::http::StatusCode;
+use ureq::{BodyReader, http::StatusCode};
 use which::which_all;
+
+use crate::archive::unpack_targz;
 
 const DEFAULT_IMMICH_GO_RELEASE_TAG: &str = "v0.31.0";
 
@@ -62,7 +62,7 @@ impl GitHubRelease {
 }
 
 fn is_immich_go_installed() -> Result<bool> {
-    Ok(which_all("immich-go")?.next().is_some())
+    Ok(which_all("immich-go").context("Searching for immich-go executable")?.next().is_some())
 }
 
 fn get_github_release(tag: &str) -> Result<GitHubRelease> {
@@ -90,44 +90,46 @@ fn get_github_release(tag: &str) -> Result<GitHubRelease> {
     Ok(release)
 }
 
+fn write_file_from_response(file: &mut File, response_reader: &mut BodyReader<'_>) -> Result<()> {
+    let mut buffer = [0; 2_usize.pow(16)];
+
+    loop {
+        let read_count = response_reader
+            .read(&mut buffer)
+            .context("Reading response")?;
+        if read_count == 0 {
+            break;
+        }
+
+        file.write(&buffer[0..read_count])
+            .context("Writing file from response")?;
+    }
+
+    Ok(())
+}
+
 fn download_binary_from_release(release: &GitHubRelease) -> Result<()> {
     let asset_to_download = release.get_asset_for_current_platform()?;
 
     let mut response = ureq::get(&asset_to_download.browser_download_url)
         .call()
         .context("Failed to download asset from GitHub")?;
-    let response_body = response
-        .body_mut()
-        .read_to_vec()
-        .context("Failed to download asset from GitHub")?;
 
     if !response.status().is_success() {
         bail!(
-            "Received HTTP error {} while downloading asset: {}",
+            "Received HTTP error {} while downloading asset",
             response.status().as_u16(),
-            String::from_utf8_lossy(&response_body),
         );
     }
 
-    let extractor = ArchiveExtractor::new();
-    let files = extractor
-        .extract(&response_body, ArchiveFormat::TarGz)
-        .context("Failed to extract immich-go binary")?;
+    let mut response_reader = response.body_mut().as_reader();
 
-    let Some(immich_go_data) = files.iter().find(|f| f.path.starts_with("immich-go")) else {
-        bail!("Downloaded asset does not contain immich-go binary");
-    };
+    let mut file = File::create("immich-go.tar.gz").context("Creating immich-go.tar.gz file")?;
+    write_file_from_response(&mut file, &mut response_reader)?;
 
-    let mut immich_go_file = File::create(&immich_go_data.path)
-        .context(format!("Failed creating file {}", immich_go_data.path))?;
+    unpack_targz("immich-go.tar.gz", &["immich-go"])?;
 
-    immich_go_file
-        .write(&immich_go_data.data)
-        .context(format!("Failed writing file {}", immich_go_data.path))?;
-
-    let mut immich_go_file_perms = immich_go_file.metadata()?.permissions();
-    immich_go_file_perms.set_mode(immich_go_file_perms.mode() | 0o111);
-    immich_go_file.set_permissions(immich_go_file_perms)?;
+    fs::remove_file("immich-go.tar.gz").context("Deleting immich-go.tar.gz")?;
 
     Ok(())
 }
@@ -140,7 +142,7 @@ fn download_immich_go() -> Result<()> {
 
     let release =
         get_github_release(&release_tag).context("Failed to get release details from GitHub")?;
-    download_binary_from_release(&release).context("Failed to download binary from GitHub")?;
+    download_binary_from_release(&release).context("Failed to install immich-go from GitHub")?;
 
     Ok(())
 }
