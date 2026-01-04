@@ -1,16 +1,18 @@
 use anyhow::Result;
 use dotenvy::dotenv;
 
-use crate::immich_go_manager::ensure_immich_go;
+use crate::push::backup;
 
-mod backup;
-mod immich_go_manager;
-mod archive;
+mod archive_utils;
+mod push;
+mod pull;
+mod consts;
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let _ = dotenv();
 
-    ensure_immich_go()?;
+    backup().await?;
 
     Ok(())
 }

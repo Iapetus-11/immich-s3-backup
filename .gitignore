@@ -1,4 +1,6 @@
 target/
 
 immich-go
-immich-go.exe
+immich-backup/
+
+.env
