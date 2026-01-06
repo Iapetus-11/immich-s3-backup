@@ -1,26 +1,24 @@
+use std::{
+    path::{Path, PathBuf},
+    str::FromStr,
+};
+
 use anyhow::{Context, Result};
 use tokio::process::Command;
 
-pub async fn unpack_targz(path: &str, files: &[&str]) -> Result<()> {
-    Command::new("tar")
-        .arg("-xzf")
-        .arg(path)
-        .args(files)
-        .status()
-        .await
-        .with_context(|| format!("Unpacking archive {path}"))?;
+pub async fn pack_zip(path: &Path) -> Result<PathBuf> {
+    let path = path.to_string_lossy().to_string();
 
-    Ok(())
-}
+    let output_path_str = format!("{path}.zip");
+    let output_path = PathBuf::from_str(&output_path_str).context("Constructing output PathBuf")?;
 
-pub async fn pack_zip(path: &str) -> Result<()> {
     Command::new("zip")
         .arg("-9rq")
-        .arg(format!("{path}.zip"))
-        .arg(path)
+        .arg(output_path_str)
+        .arg(&path)
         .status()
         .await
         .with_context(|| format!("Zipping {path}"))?;
 
-    Ok(())
+    Ok(output_path)
 }
