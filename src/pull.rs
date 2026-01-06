@@ -12,11 +12,6 @@ use tokio::{
 
 use crate::{archive_utils::pack_zip, consts::DB_BACKUP_FILENAME};
 
-pub struct DumpPaths {
-    zipped_db_dump: PathBuf,
-    zipped_library_folders: Vec<PathBuf>,
-}
-
 /// Creates a dump of the immich database and zips it, returning the path to that zip file
 /// Reference https://docs.immich.app/administration/backup-and-restore/#database
 async fn pull_immich_db(backup_folder: &Path) -> Result<()> {
@@ -32,7 +27,7 @@ async fn pull_immich_db(backup_folder: &Path) -> Result<()> {
         .env("PGPASSWORD", db_password)
         .output()
         .await
-        .with_context(|| format!("Running pg_dumpall"))?;
+        .with_context(|| "Running pg_dumpall".to_string())?;
 
     if !pg_dumpall_output.status.success() {
         bail!(
@@ -53,7 +48,7 @@ async fn pull_immich_db(backup_folder: &Path) -> Result<()> {
         .await
         .with_context(|| format!("Writing {DB_BACKUP_FILENAME}"))?;
 
-    let db_dump_zipped_path = pack_zip(&dump_file_path)
+    pack_zip(&dump_file_path)
         .await
         .with_context(|| format!("Zipping {}", dump_file_path.to_string_lossy()))?;
 
