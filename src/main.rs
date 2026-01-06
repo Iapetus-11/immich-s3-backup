@@ -12,6 +12,8 @@ mod push;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    println!("Running backup...");
+
     let _ = dotenv();
 
     let backup_folder = PathBuf::from_iter([

@@ -1,4 +1,6 @@
-FROM rust:1.88-alpine3.22 AS build
+FROM rust:1.91.1-alpine3.23 AS build
+
+WORKDIR /immich-s3-backup
 
 COPY Cargo.lock Cargo.toml ./
 
@@ -7,14 +9,19 @@ RUN mkdir src && echo "fn main() {}" > src/main.rs
 RUN cargo fetch
 RUN cargo build --locked --profile release
 RUN rm target/release/immich-s3-backup target/release/immich-s3-backup.d
-RUN rm -rf src/ target/release/deps/immich-s3-backup*
+RUN rm -rf src/ target/release/deps/immich_s3_backup*
 
 COPY src/ ./src/
 
 RUN cargo build --frozen --profile release
 
-FROM alpine:3.22 AS runner
 
-COPY --from=build /target/release/immich-s3-backup .
+FROM alpine:3.23 AS runner
 
-ENTRYPOINT ./immich-s3-backup
+WORKDIR /immich-s3-backup
+
+RUN apk add --no-cache postgresql-client
+
+COPY --from=build /immich-s3-backup/target/release/immich-s3-backup .
+
+ENTRYPOINT ["./immich-s3-backup"]
