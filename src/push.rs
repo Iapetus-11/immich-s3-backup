@@ -14,6 +14,8 @@ async fn push_file(
     bucket_name: &str,
     s3_client: &aws_sdk_s3::Client,
 ) -> Result<()> {
+    println!("Uploading {path:?}...");
+
     let file_name = path.file_name().unwrap().to_str().unwrap();
     let object_key = format!("{base_object_key}/{file_name}");
 
@@ -28,6 +30,8 @@ async fn push_file(
         .bucket(bucket_name)
         .send()
         .await?;
+
+    println!("Done uploading {path:?}");
 
     Ok(())
 }
