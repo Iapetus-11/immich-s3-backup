@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::env;
 
 use anyhow::{Context, Result};
 use chrono::Utc;
@@ -16,15 +16,20 @@ async fn main() -> Result<()> {
 
     let _ = dotenv();
 
-    let backup_folder = PathBuf::from_iter([
-        "./backups",
+    let mut backup_folder = env::temp_dir();
+    backup_folder.extend([
+        "backups",
         &Utc::now().format("%Y-%m-%d_%H-%M-%S").to_string(),
     ]);
+
     fs::create_dir_all(&backup_folder)
         .await
         .with_context(|| format!("Creating dir {}", backup_folder.to_string_lossy()))?;
 
     pull::run(&backup_folder).await?;
+    push::run(&backup_folder).await?;
+
+    println!("Done!");
 
     Ok(())
 }

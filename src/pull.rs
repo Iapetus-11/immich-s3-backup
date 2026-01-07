@@ -17,12 +17,14 @@ use crate::{archive_utils::pack_zip, consts::DB_BACKUP_FILENAME};
 async fn pull_immich_db(backup_folder: &Path) -> Result<()> {
     println!("Dumping immich database...");
 
+    let db_host = env::var("DB_HOST").context("Missing env DB_HOST")?;
     let db_username = env::var("DB_USERNAME").context("Missing env DB_USERNAME")?;
     let db_password = env::var("DB_PASSWORD").context("Missing env DB_PASSWORD")?;
 
     let pg_dumpall_output = Command::new("pg_dumpall")
         .arg("--clean")
         .arg("--if-exists")
+        .arg(format!("--host={db_host}"))
         .arg(format!("--username={db_username}"))
         .env("PGPASSWORD", db_password)
         .output()
@@ -43,6 +45,7 @@ async fn pull_immich_db(backup_folder: &Path) -> Result<()> {
     let mut dump_file = File::create(&dump_file_path)
         .await
         .with_context(|| format!("Creating {DB_BACKUP_FILENAME}"))?;
+
     dump_file
         .write_all(&pg_dumpall_output.stdout)
         .await
@@ -50,11 +53,11 @@ async fn pull_immich_db(backup_folder: &Path) -> Result<()> {
 
     pack_zip(&dump_file_path)
         .await
-        .with_context(|| format!("Zipping {}", dump_file_path.to_string_lossy()))?;
+        .context("Zipping database dump")?;
 
     fs::remove_file(&dump_file_path)
         .await
-        .with_context(|| format!("Removing old {}", dump_file_path.to_string_lossy()))?;
+        .with_context(|| format!("Removing old {dump_file_path:?}"))?;
 
     Ok(())
 }
@@ -70,28 +73,26 @@ async fn pull_immich_files(backup_folder: &Path) -> Result<()> {
     const FOLDERS_TO_BACKUP: &[&str] = &["library", "upload", "profile"];
 
     for folder_str in FOLDERS_TO_BACKUP {
-        let mut folder_path = backup_folder.to_path_buf();
+        let mut folder_path = upload_location.to_path_buf();
         folder_path.push(folder_str);
 
-        let zipped_folder_path = pack_zip(&folder_path).await.with_context(|| {
-            format!("Zipping {}/{folder_str}", upload_location.to_string_lossy())
-        })?;
+        let zipped_folder_path = pack_zip(&folder_path)
+            .await
+            .with_context(|| format!("Zipping {folder_path:?}"))?;
 
         let zipped_folder_file_name = zipped_folder_path.file_name().unwrap();
 
         // Move zipped folder to backup location
-        fs::rename(
+        fs::copy(
             &zipped_folder_path,
             PathBuf::from_iter([backup_folder, Path::new(zipped_folder_file_name)]),
         )
         .await
-        .with_context(|| {
-            format!(
-                "Moving {} to {}",
-                zipped_folder_file_name.to_string_lossy(),
-                backup_folder.to_string_lossy()
-            )
-        })?;
+        .with_context(|| format!("Copying {zipped_folder_path:?} to {backup_folder:?}"))?;
+
+        fs::remove_file(&zipped_folder_path)
+            .await
+            .with_context(|| format!("Removing old {zipped_folder_path:?}"))?;
     }
 
     Ok(())

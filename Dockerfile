@@ -20,7 +20,7 @@ FROM alpine:3.23 AS runner
 
 WORKDIR /immich-s3-backup
 
-RUN apk add --no-cache postgresql-client
+RUN apk add --no-cache postgresql-client zip
 
 COPY --from=build /immich-s3-backup/target/release/immich-s3-backup .
 
