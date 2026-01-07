@@ -1,6 +1,5 @@
 target/
 
-immich-go
-immich-backup/
+backups/
 
 .env
