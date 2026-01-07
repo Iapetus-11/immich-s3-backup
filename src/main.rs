@@ -6,7 +6,6 @@ use dotenvy::dotenv;
 use tokio::fs;
 
 mod archive_utils;
-mod consts;
 mod pull;
 mod push;
 

@@ -10,7 +10,9 @@ use tokio::{
     process::Command,
 };
 
-use crate::{archive_utils::pack_zip, consts::DB_BACKUP_FILENAME};
+use crate::archive_utils::pack_zip;
+
+pub const DB_BACKUP_FILENAME: &str = "db-backup.sql";
 
 /// Creates a dump of the immich database and zips it, returning the path to that zip file
 /// Reference https://docs.immich.app/administration/backup-and-restore/#database
