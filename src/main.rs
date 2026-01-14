@@ -1,34 +1,30 @@
-use std::env;
+use std::process;
 
-use anyhow::{Context, Result};
-use chrono::Utc;
 use dotenvy::dotenv;
-use tokio::fs;
+use tracing::{Level, error};
 
 mod archive_utils;
-mod pull;
-mod push;
+mod backup;
+mod recursive_dir_reader;
+mod uploader;
+
+// TODO: Zipping and uploading should occur at the same time... then need to clear disk as it's deleted
+// TODO: Parallelize uploading using worker system (mutex around vec of file upload paths?)
 
 #[tokio::main]
-async fn main() -> Result<()> {
-    println!("Running backup...");
+async fn main() {
+    tracing::subscriber::set_global_default(
+        tracing_subscriber::FmtSubscriber::builder()
+            .with_ansi(true)
+            .with_max_level(Level::INFO)
+            .finish(),
+    )
+    .unwrap();
 
     let _ = dotenv();
 
-    let mut backup_folder = env::temp_dir();
-    backup_folder.extend([
-        "backups",
-        &Utc::now().format("%Y-%m-%d_%H-%M-%S").to_string(),
-    ]);
-
-    fs::create_dir_all(&backup_folder)
-        .await
-        .with_context(|| format!("Creating dir {}", backup_folder.to_string_lossy()))?;
-
-    pull::run(&backup_folder).await?;
-    push::run(&backup_folder).await?;
-
-    println!("Done!");
-
-    Ok(())
+    if let Err(error) = backup::run().await {
+        error!("{error:?}");
+        process::exit(1);
+    }
 }
