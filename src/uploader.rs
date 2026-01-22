@@ -1,6 +1,7 @@
-use std::{env, path::Path};
+use std::{env, path::Path, time::Duration};
 
 use anyhow::{Context, Result};
+use aws_config::retry::RetryConfigBuilder;
 use aws_sdk_s3::primitives::ByteStream;
 use tracing::info;
 
@@ -15,7 +16,16 @@ impl S3Uploader {
     pub async fn new_from_env(backup_name: String) -> Result<Self> {
         let bucket_name = env::var("AWS_BUCKET_NAME").context("Missing env AWS_BUCKET_NAME")?;
 
-        let aws_sdk_config = aws_config::load_from_env().await;
+        let retry_config = RetryConfigBuilder::new()
+            .max_attempts(10)
+            .initial_backoff(Duration::from_secs(2))
+            .max_backoff(Duration::from_secs(30))
+            .build();
+        let aws_sdk_config = aws_config::load_from_env()
+            .await
+            .into_builder()
+            .retry_config(retry_config)
+            .build();
         let s3_client = aws_sdk_s3::Client::new(&aws_sdk_config);
 
         Ok(Self {
