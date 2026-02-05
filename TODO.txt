@@ -1,0 +1,5 @@
+- Centralize configuration (no more env::var() sprinkled around, consider using clap?) https://rust.code-maven.com/clap/clap-and-environment-variables
+- Update zip lib and readdress prior broken functionality from it https://github.com/zip-rs/zip2/releases
+- Recurring backup functionality
+- Delete old backups automatically
+- Restore from backup functionality

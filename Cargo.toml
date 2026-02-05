@@ -8,6 +8,7 @@ anyhow = "1.0.100"
 aws-config = { version = "1.8.12", features = ["behavior-version-latest"] }
 aws-sdk-s3 = "1.119.0"
 chrono = { version = "0.4.42", default-features = false, features = ["now"] }
+clap = { version = "4.5.57", default-features = false, features = ["std", "derive", "help", "suggestions", "env"] }
 dotenvy = "0.15.7"
 tokio = { version = "1.48.0", features = ["fs", "macros", "process", "rt-multi-thread"] }
 tracing = "0.1.44"
