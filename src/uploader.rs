@@ -1,9 +1,11 @@
-use std::{env, path::Path, time::Duration};
+use std::{path::Path, time::Duration};
 
 use anyhow::{Context, Result};
 use aws_config::retry::RetryConfigBuilder;
 use aws_sdk_s3::primitives::ByteStream;
 use tracing::info;
+
+use crate::config::CONFIG;
 
 #[derive(Clone)]
 pub struct S3Uploader {
@@ -14,8 +16,6 @@ pub struct S3Uploader {
 
 impl S3Uploader {
     pub async fn new_from_env(backup_name: String) -> Result<Self> {
-        let bucket_name = env::var("AWS_BUCKET_NAME").context("Missing env AWS_BUCKET_NAME")?;
-
         let retry_config = RetryConfigBuilder::new()
             .max_attempts(10)
             .initial_backoff(Duration::from_secs(2))
@@ -30,7 +30,7 @@ impl S3Uploader {
 
         Ok(Self {
             s3_client,
-            bucket_name,
+            bucket_name: CONFIG.aws_bucket_name.clone(),
             base_object_key: backup_name,
         })
     }

@@ -13,19 +13,15 @@ use tokio::{
 use tracing::info;
 
 use crate::{
-    archive_utils::pack_zip, recursive_dir_reader::RecursiveDirReader, uploader::S3Uploader,
+    archive_utils::pack_zip, config::CONFIG, recursive_dir_reader::RecursiveDirReader, uploader::S3Uploader
 };
 
 pub const DB_BACKUP_FILENAME: &str = "db-backup.sql";
 
 /// Creates a dump of the immich database and zips it, returning the path to that zip file
-/// Reference https://docs.immich.app/administration/backup-and-restore/#database
+/// Reference <https://docs.immich.app/administration/backup-and-restore/#database>
 async fn backup_immich_db(backup_folder: &Path, s3_uploader: &S3Uploader) -> Result<()> {
     info!("Dumping immich database...");
-
-    let db_host = env::var("DB_HOST").context("Missing env DB_HOST")?;
-    let db_username = env::var("DB_USERNAME").context("Missing env DB_USERNAME")?;
-    let db_password = env::var("DB_PASSWORD").context("Missing env DB_PASSWORD")?;
 
     let mut dump_file_path = PathBuf::from(backup_folder);
     dump_file_path.push(DB_BACKUP_FILENAME);
@@ -36,9 +32,9 @@ async fn backup_immich_db(backup_folder: &Path, s3_uploader: &S3Uploader) -> Res
     let pg_dumpall_output = Command::new("pg_dumpall")
         .arg("--clean")
         .arg("--if-exists")
-        .arg(format!("--host={db_host}"))
-        .arg(format!("--username={db_username}"))
-        .env("PGPASSWORD", db_password)
+        .arg(format!("--host={}", CONFIG.db_host))
+        .arg(format!("--username={}", CONFIG.db_username))
+        .env("PGPASSWORD", &CONFIG.db_password)
         .stdout(dump_file.into_std().await)
         .status()
         .await
@@ -115,7 +111,7 @@ async fn backup_immich_folder(
 
             block_in_place(|| {
                 pack_zip(
-                    &batch_files.iter().map(|p| p.as_path()).collect::<Vec<_>>(),
+                    &batch_files.iter().map(std::path::PathBuf::as_path).collect::<Vec<_>>(),
                     &zip_output_path,
                 )
             })
@@ -170,35 +166,22 @@ async fn backup_immich_folder(
 }
 
 /// Zips up immich files (containing media library, profile pictures, and more)
-/// Reference https://docs.immich.app/administration/backup-and-restore/#filesystem
+/// Reference <https://docs.immich.app/administration/backup-and-restore/#filesystem>
 async fn backup_immich_files(backup_output_folder: &Path, s3_uploader: &S3Uploader) -> Result<()> {
     info!("Zipping immich data...");
 
     const FOLDERS_TO_BACKUP: &[&str] = &["library", "upload", "profile"];
 
-    let upload_location = env::var("UPLOAD_LOCATION").context("Missing env UPLOAD_LOCATION")?;
-    let upload_location = Path::new(&upload_location);
-
-    let max_batch_size_bytes = env::var("BACKUP_BATCH_SIZE_BYTES")
-        .context("Missing env BACKUP_BATCH_SIZE_BYTES")?
-        .parse::<u64>()
-        .context("Parsing BACKUP_BATCH_SIZE_BYTES as u64")?;
-
-    let max_concurrent_uploads = env::var("BACKUP_MAX_CONCURRENT_UPLOADS")
-        .context("Missing env BACKUP_MAX_CONCURRENT_UPLOADS")?
-        .parse::<usize>()
-        .context("Parsing BACKUP_MAX_CONCURRENT_UPLOADS as usize")?;
-
     for target_folder_name in FOLDERS_TO_BACKUP {
         backup_immich_folder(
             backup_output_folder,
-            upload_location,
+            &CONFIG.upload_location,
             target_folder_name,
-            max_batch_size_bytes,
-            max_concurrent_uploads,
+            CONFIG.max_batch_size_bytes,
+            CONFIG.max_concurrent_uploads,
             s3_uploader,
         )
-        .await?
+        .await?;
     }
 
     Ok(())

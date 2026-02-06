@@ -25,13 +25,13 @@ impl From<FileType> for RecursiveReaderOp {
     }
 }
 
-/// Helper to make ergonomics of RecursiveDirReader::new nicer without adding an extra clone
+/// Helper to make ergonomics of `RecursiveDirReader::new` nicer without adding an extra clone
 pub enum MaybeOwnedPath<'p> {
     Owned(PathBuf),
     Borrowed(&'p Path),
 }
 
-impl<'p> MaybeOwnedPath<'p> {
+impl MaybeOwnedPath<'_> {
     fn into_owned(self) -> PathBuf {
         match self {
             Self::Borrowed(borrowed) => borrowed.to_path_buf(),
@@ -53,7 +53,7 @@ impl<'p> From<&'p Path> for MaybeOwnedPath<'p> {
     }
 }
 
-impl<'p> From<PathBuf> for MaybeOwnedPath<'p> {
+impl From<PathBuf> for MaybeOwnedPath<'_> {
     fn from(val: PathBuf) -> Self {
         MaybeOwnedPath::Owned(val)
     }
