@@ -2,6 +2,8 @@ use std::process;
 
 use tracing::{Level, error};
 
+use crate::config::force_load_config;
+
 mod archive_utils;
 mod backup;
 mod config;
@@ -10,6 +12,8 @@ mod uploader;
 
 #[tokio::main]
 async fn main() {
+    force_load_config();
+
     tracing::subscriber::set_global_default(
         tracing_subscriber::FmtSubscriber::builder()
             .with_ansi(true)

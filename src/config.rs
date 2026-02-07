@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::LazyLock};
+use std::{ops::Deref, path::PathBuf, sync::LazyLock};
 
 use clap::Parser;
 use dotenvy::dotenv;
@@ -31,3 +31,7 @@ pub static CONFIG: LazyLock<Config> = LazyLock::new(|| {
     let _ = dotenv();
     Config::parse()
 });
+
+pub fn force_load_config() {
+    let _ = CONFIG.deref();
+}
