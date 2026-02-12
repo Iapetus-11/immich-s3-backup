@@ -13,7 +13,12 @@ use tokio::{
 use tracing::info;
 
 use crate::{
-    archive_utils::pack_zip, config::CONFIG, recursive_dir_reader::RecursiveDirReader, uploader::S3Uploader
+    backup::{
+        history::BackupHistoryManager, recursive_dir_reader::RecursiveDirReader,
+        uploader::S3Uploader,
+    },
+    config::CONFIG,
+    utils::{archives::pack_zip, aws_s3::initialize_s3_client},
 };
 
 pub const DB_BACKUP_FILENAME: &str = "db-backup.sql";
@@ -53,7 +58,11 @@ async fn backup_immich_db(backup_folder: &Path, s3_uploader: &S3Uploader) -> Res
         .with_context(|| format!("Removing {dump_file_path:?}"))?;
 
     s3_uploader
-        .upload_file(&dump_file_zip_path, &dump_file_zip_name)
+        .upload_file(
+            &dump_file_zip_path,
+            &dump_file_zip_name,
+            Some("application/zip".to_string()),
+        )
         .await
         .context("Uploading database dump")?;
 
@@ -111,7 +120,10 @@ async fn backup_immich_folder(
 
             block_in_place(|| {
                 pack_zip(
-                    &batch_files.iter().map(std::path::PathBuf::as_path).collect::<Vec<_>>(),
+                    &batch_files
+                        .iter()
+                        .map(std::path::PathBuf::as_path)
+                        .collect::<Vec<_>>(),
                     &zip_output_path,
                 )
             })
@@ -141,6 +153,7 @@ async fn backup_immich_folder(
                         .upload_file(
                             &zip_output_path,
                             &format!("{target_folder_name}/{zip_output_name}"),
+                            Some("application/zip".to_string()),
                         )
                         .await
                         .with_context(|| format!("Upload batch {batch_idx}"))?;
@@ -168,9 +181,9 @@ async fn backup_immich_folder(
 /// Zips up immich files (containing media library, profile pictures, and more)
 /// Reference <https://docs.immich.app/administration/backup-and-restore/#filesystem>
 async fn backup_immich_files(backup_output_folder: &Path, s3_uploader: &S3Uploader) -> Result<()> {
-    info!("Zipping immich data...");
-
     const FOLDERS_TO_BACKUP: &[&str] = &["library", "upload", "profile"];
+
+    info!("Zipping immich data...");
 
     for target_folder_name in FOLDERS_TO_BACKUP {
         backup_immich_folder(
@@ -190,23 +203,38 @@ async fn backup_immich_files(backup_output_folder: &Path, s3_uploader: &S3Upload
 pub async fn run() -> Result<()> {
     info!("Backing up Immich...");
 
-    let backup_name = Utc::now().format("%Y-%m-%d_%H-%M-%S").to_string();
-    let mut backup_folder = env::temp_dir();
-    backup_folder.extend(["backups", &backup_name]);
+    let history_manager = BackupHistoryManager::open(&CONFIG.history_file)
+        .context("Opening backup history manager")?;
 
-    fs::create_dir_all(&backup_folder)
+    history_manager
+        .run_and_record(async || -> Result<()> {
+            let backup_name = Utc::now().format("%Y-%m-%d_%H-%M-%S").to_string();
+            let mut backup_folder = env::temp_dir();
+            backup_folder.extend(["backups", &backup_name]);
+
+            fs::create_dir_all(&backup_folder)
+                .await
+                .with_context(|| format!("Creating dir {}", backup_folder.to_string_lossy()))?;
+
+            let s3_client = initialize_s3_client();
+            let s3_uploader = S3Uploader::new(
+                s3_client,
+                CONFIG.aws_bucket_name.clone(),
+                backup_name.clone(),
+            );
+
+            backup_immich_db(&backup_folder, &s3_uploader)
+                .await
+                .context("Backing up immich DB")?;
+
+            backup_immich_files(&backup_folder, &s3_uploader)
+                .await
+                .context("Backing up immich files")?;
+
+            Ok(())
+        })
         .await
-        .with_context(|| format!("Creating dir {}", backup_folder.to_string_lossy()))?;
-
-    let s3_uploader = S3Uploader::new_from_env(backup_name.clone()).await?;
-
-    backup_immich_db(&backup_folder, &s3_uploader)
-        .await
-        .context("Backing up immich DB")?;
-
-    backup_immich_files(&backup_folder, &s3_uploader)
-        .await
-        .context("Backing up immich files")?;
+        .context("Running history manager")??;
 
     info!("Done!");
 

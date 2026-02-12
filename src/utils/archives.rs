@@ -68,7 +68,7 @@ pub fn pack_zip(file_paths: &[&Path], output_zip_path: &Path) -> Result<()> {
     let mut zip_writer = ZipWriter::new(&mut output_file);
 
     let mut seen_dirs = HashSet::<&Path>::new();
-    let mut file_buffer = [0_u8; 2_usize.pow(20)]; // 1MB
+    let mut file_buffer = vec![0_u8; 2_usize.pow(20)].into_boxed_slice(); // 1MB
 
     let mut last_result = Ok(());
     for file_path in file_paths {

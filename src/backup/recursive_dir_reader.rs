@@ -18,9 +18,9 @@ impl From<FileType> for RecursiveReaderOp {
         // TODO: Should this follow sym-links?
 
         if value.is_dir() {
-            RecursiveReaderOp::Discover
+            Self::Discover
         } else {
-            RecursiveReaderOp::Yield
+            Self::Yield
         }
     }
 }

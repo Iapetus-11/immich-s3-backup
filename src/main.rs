@@ -4,11 +4,9 @@ use tracing::{Level, error};
 
 use crate::config::force_load_config;
 
-mod archive_utils;
 mod backup;
 mod config;
-mod recursive_dir_reader;
-mod uploader;
+mod utils;
 
 #[tokio::main]
 async fn main() {
