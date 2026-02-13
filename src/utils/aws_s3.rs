@@ -1,18 +1,19 @@
 use std::time::Duration;
 
-use aws_config::retry::RetryConfigBuilder;
+use aws_config::{BehaviorVersion, Region, retry::RetryConfigBuilder};
 use aws_sdk_s3::config::{Credentials, SharedCredentialsProvider};
 
 use crate::config::CONFIG;
 
 pub fn initialize_s3_client() -> aws_sdk_s3::Client {
     let retry_config = RetryConfigBuilder::new()
-        .max_attempts(10)
-        .initial_backoff(Duration::from_secs(2))
-        .max_backoff(Duration::from_secs(30))
+        .max_attempts(CONFIG.max_upload_retries)
+        .initial_backoff(Duration::from_secs(1))
+        .max_backoff(Duration::from_secs(CONFIG.max_upload_retry_backoff))
         .build();
 
     let aws_sdk_config = aws_config::SdkConfig::builder()
+        .behavior_version(BehaviorVersion::latest())
         .credentials_provider(SharedCredentialsProvider::new(Credentials::new(
             CONFIG.aws_access_key_id.clone(),
             CONFIG.aws_secret_access_key.clone(),
@@ -20,6 +21,7 @@ pub fn initialize_s3_client() -> aws_sdk_s3::Client {
             None,
             "Clap",
         )))
+        .region(Some(Region::from_static(&CONFIG.aws_region)))
         .retry_config(retry_config)
         .build();
 

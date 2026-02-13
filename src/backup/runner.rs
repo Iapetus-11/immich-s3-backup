@@ -13,10 +13,7 @@ use tokio::{
 use tracing::info;
 
 use crate::{
-    backup::{
-        history::BackupHistoryManager, recursive_dir_reader::RecursiveDirReader,
-        uploader::S3Uploader,
-    },
+    backup::{recursive_dir_reader::RecursiveDirReader, uploader::S3Uploader},
     config::CONFIG,
     utils::{archives::pack_zip, aws_s3::initialize_s3_client},
 };
@@ -78,7 +75,7 @@ async fn backup_immich_folder(
     upload_location: &Path,
     target_folder_name: &str,
     max_batch_size_bytes: u64,
-    max_concurrent_uploads: usize,
+    max_concurrent_uploads: u64,
     s3_uploader: &S3Uploader,
 ) -> Result<()> {
     let mut join_set = JoinSet::new();
@@ -135,7 +132,7 @@ async fn backup_immich_folder(
                 .len();
             info!("Finished zipping batch {batch_idx} ({batch_zip_size_bytes} bytes)");
 
-            if join_set.len() >= max_concurrent_uploads {
+            if join_set.len() as u64 >= max_concurrent_uploads {
                 info!("Max concurrent uploads reached, waiting for a previous upload to finish...");
                 join_set
                     .join_next()
@@ -203,38 +200,28 @@ async fn backup_immich_files(backup_output_folder: &Path, s3_uploader: &S3Upload
 pub async fn run() -> Result<()> {
     info!("Backing up Immich...");
 
-    let history_manager = BackupHistoryManager::open(&CONFIG.history_file)
-        .context("Opening backup history manager")?;
+    let backup_name = Utc::now().format("%Y-%m-%d_%H-%M-%S").to_string();
+    let mut backup_folder = env::temp_dir();
+    backup_folder.extend(["backups", &backup_name]);
 
-    history_manager
-        .run_and_record(async || -> Result<()> {
-            let backup_name = Utc::now().format("%Y-%m-%d_%H-%M-%S").to_string();
-            let mut backup_folder = env::temp_dir();
-            backup_folder.extend(["backups", &backup_name]);
-
-            fs::create_dir_all(&backup_folder)
-                .await
-                .with_context(|| format!("Creating dir {}", backup_folder.to_string_lossy()))?;
-
-            let s3_client = initialize_s3_client();
-            let s3_uploader = S3Uploader::new(
-                s3_client,
-                CONFIG.aws_bucket_name.clone(),
-                backup_name.clone(),
-            );
-
-            backup_immich_db(&backup_folder, &s3_uploader)
-                .await
-                .context("Backing up immich DB")?;
-
-            backup_immich_files(&backup_folder, &s3_uploader)
-                .await
-                .context("Backing up immich files")?;
-
-            Ok(())
-        })
+    fs::create_dir_all(&backup_folder)
         .await
-        .context("Running history manager")??;
+        .with_context(|| format!("Creating dir {}", backup_folder.to_string_lossy()))?;
+
+    let s3_client = initialize_s3_client();
+    let s3_uploader = S3Uploader::new(
+        s3_client,
+        CONFIG.aws_bucket_name.clone(),
+        backup_name.clone(),
+    );
+
+    backup_immich_db(&backup_folder, &s3_uploader)
+        .await
+        .context("Backing up immich DB")?;
+
+    backup_immich_files(&backup_folder, &s3_uploader)
+        .await
+        .context("Backing up immich files")?;
 
     info!("Done!");
 
