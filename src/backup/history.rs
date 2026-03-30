@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use tokio::task::block_in_place;
 use tracing::error;
 
-#[derive(Clone, Deserialize, Serialize, PartialEq, Debug)]
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq, Debug)]
 pub struct BackupId(i64);
 
 #[derive(Deserialize, Serialize)]
@@ -70,13 +70,13 @@ impl BackupHistoryManager {
         let commit_result = self.commit();
         if let Err(error) = commit_result {
             error!("Failed to commit backup history entry {id:?}: {error:?}");
-        };
+        }
 
         id
     }
 
-    pub fn finish_entry(&mut self, id: BackupId, failed: bool) {
-        let Some(entry) = self.entries.iter_mut().find(|entry| entry.id == id) else {
+    pub fn finish_entry(&mut self, id: &BackupId, failed: bool) {
+        let Some(entry) = self.entries.iter_mut().find(|entry| &entry.id == id) else {
             error!("Could not find backup history entry {id:?}");
             return;
         };
