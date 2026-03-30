@@ -61,7 +61,6 @@ pub fn pack_zip(file_paths: &[&Path], output_zip_path: &Path) -> Result<()> {
     let mut output_file = File::create(output_zip_path)
         .with_context(|| format!("Creating file at {output_zip_path:?}"))?;
 
-    // Would be nice to use LZMA here, but the crate fails to build on Rust 1.91.1
     let zip_options = SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)
         .compression_level(Some(9));
