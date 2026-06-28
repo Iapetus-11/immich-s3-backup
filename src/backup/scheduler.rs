@@ -46,7 +46,7 @@ impl BackupScheduler {
         let duration_between_backups = Duration::from_hours(24 * u64::from(CONFIG.interval_days));
         let duration_since_last_backup = (now - last_backup_at).to_std().unwrap();
 
-        if duration_since_last_backup > duration_between_backups {
+        if duration_since_last_backup >= duration_between_backups {
             return Ok(Duration::ZERO);
         }
 
