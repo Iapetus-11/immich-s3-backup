@@ -1,11 +1,11 @@
 use std::{
-    fs::File,
     io::{Read, Write},
     path::Path,
 };
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use tokio::task::block_in_place;
 use tracing::error;
@@ -22,43 +22,28 @@ pub struct BackupEntry {
 }
 
 pub struct BackupHistoryManager {
-    file: File,
-    entries: Vec<BackupEntry>,
+    db: Connection,
 }
 
 impl BackupHistoryManager {
     pub fn open(path: &Path) -> Result<Self> {
-        let (file, entries) = block_in_place(|| -> Result<(File, Vec<BackupEntry>)> {
-            let mut file = File::options()
-                .write(true)
-                .read(true)
-                .create(true)
-                .truncate(false)
-                .open(path)
-                .context("Failed to open backup history file")?;
-            file.lock().context("Failed to lock backup history file")?;
+        let db = Connection::open(path).context("Opening Sqlite DB")?;
+        let mut self_ = Self { db };
 
-            let mut file_data = String::new();
-            file.read_to_string(&mut file_data)?;
-            let entries: Vec<BackupEntry> = serde_json::from_str(&file_data)?;
+        self_.ensure_table();
 
-            Ok((file, entries))
-        })?;
-
-        Ok(Self { file, entries })
+        Ok(self_)
     }
 
-    fn commit(&mut self) -> Result<()> {
-        block_in_place(|| {
-            self.file
-                .write_all(serde_json::to_string_pretty(&self.entries)?.as_bytes())
-                .map_err(Into::into)
-        })
+    fn ensure_table(&mut self) {
+        self.db.execute("CREATE TABLE IF NOT EXISTS", params)
     }
 
     pub fn start_entry(&mut self) -> BackupId {
         let now = Utc::now();
         let id = BackupId(now.timestamp_millis());
+
+        self.db.execute("INSERT INTO", params)
 
         self.entries.push(BackupEntry {
             id: id.clone(),
