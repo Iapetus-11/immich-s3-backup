@@ -1,0 +1,1 @@
+SELECT id, started_at, ended_at, failed FROM history ORDER BY started_at DESC LIMIT 1;

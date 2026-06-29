@@ -1,0 +1,1 @@
+UPDATE history SET failed = ?2, ended_at = ?3 WHERE id = ?1;

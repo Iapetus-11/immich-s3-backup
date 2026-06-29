@@ -1,14 +1,9 @@
-use std::{
-    io::{Read, Write},
-    path::Path,
-};
-
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
-use tokio::task::block_in_place;
-use tracing::error;
+
+use crate::config::CONFIG;
 
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq, Debug)]
 pub struct BackupId(i64);
@@ -26,76 +21,64 @@ pub struct BackupHistoryManager {
 }
 
 impl BackupHistoryManager {
-    pub fn open(path: &Path) -> Result<Self> {
-        let db = Connection::open(path).context("Opening Sqlite DB")?;
+    pub fn new() -> Result<Self> {
+        let db = Connection::open(&CONFIG.history_file).context("Opening Sqlite DB")?;
         let mut self_ = Self { db };
 
-        self_.ensure_table();
+        self_.ensure_table()?;
 
         Ok(self_)
     }
 
-    fn ensure_table(&mut self) {
-        self.db.execute("CREATE TABLE IF NOT EXISTS", params)
+    fn ensure_table(&mut self) -> Result<()> {
+        self.db
+            .execute(include_str!("../sql/create_history_table.sql"), ())
+            .context("Creating history table")?;
+        Ok(())
     }
 
-    pub fn start_entry(&mut self) -> BackupId {
+    pub fn start_entry(&mut self) -> Result<BackupId> {
         let now = Utc::now();
         let id = BackupId(now.timestamp_millis());
 
-        self.db.execute("INSERT INTO", params)
+        self.db
+            .execute(include_str!("../sql/start_history_entry.sql"), (id.0, now))
+            .context("Creating history record")?;
 
-        self.entries.push(BackupEntry {
-            id: id.clone(),
-            started_at: now,
-            ended_at: None,
-            failed: false,
-        });
-
-        let commit_result = self.commit();
-        if let Err(error) = commit_result {
-            error!("Failed to commit backup history entry {id:?}: {error:?}");
-        }
-
-        id
+        Ok(id)
     }
 
-    pub fn finish_entry(&mut self, id: &BackupId, failed: bool) {
-        let Some(entry) = self.entries.iter_mut().find(|entry| &entry.id == id) else {
-            error!("Could not find backup history entry {id:?}");
-            return;
+    pub fn finish_entry(&mut self, id: &BackupId, failed: bool) -> Result<()> {
+        let now = Utc::now();
+        self.db
+            .execute(
+                include_str!("../sql/finish_history_entry.sql"),
+                (id.0, failed, now),
+            )
+            .context("Updating history record")?;
+        Ok(())
+    }
+
+    pub fn get_last_entry(&mut self) -> Result<Option<BackupEntry>> {
+        let mut stmt = self
+            .db
+            .prepare(include_str!("../sql/get_last_history_entry.sql"))?;
+
+        let last_entry = stmt
+            .query_map((), |row| {
+                Ok(BackupEntry {
+                    id: BackupId(row.get(0)?),
+                    started_at: row.get(1)?,
+                    ended_at: row.get(2)?,
+                    failed: row.get(3)?,
+                })
+            })?
+            .next();
+
+        let Some(last_entry) = last_entry else {
+            return Ok(None);
         };
 
-        entry.failed = failed;
-        entry.ended_at = Some(Utc::now());
-
-        let commit_result = self.commit();
-        if let Err(error) = commit_result {
-            error!("Failed to commit backup history entry {id:?}: {error:?}");
-        };
-    }
-
-    fn close(&mut self) {
-        let result = block_in_place(|| -> Result<()> {
-            self.file.flush().context("Flushing backup history file")?;
-            self.file
-                .unlock()
-                .context("Unlocking backup history file")?;
-            Ok(())
-        });
-
-        if let Err(error) = result {
-            error!("Failed to close backup history manager: {error:?}");
-        }
-    }
-
-    pub fn entries(&self) -> &Vec<BackupEntry> {
-        &self.entries
-    }
-}
-
-impl Drop for BackupHistoryManager {
-    fn drop(&mut self) {
-        self.close();
+        Ok(Some(last_entry?))
     }
 }

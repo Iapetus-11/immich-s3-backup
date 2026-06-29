@@ -1,0 +1,1 @@
+INSERT INTO history (id, started_at) VALUES (?1, ?2);

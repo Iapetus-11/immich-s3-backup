@@ -10,7 +10,7 @@ aws-sdk-s3 = "1.137.0"
 chrono = { version = "0.4.45", default-features = false, features = ["now", "serde"] }
 clap = { version = "4.6.1", default-features = false, features = ["std", "derive", "help", "suggestions", "env"] }
 dotenvy = "0.15.7"
-rusqlite = { version = "0.40.1", features = ["bundled"] }
+rusqlite = { version = "0.40.1", features = ["bundled", "chrono"] }
 serde = { version = "1.0.228", default-features = false, features = ["derive", "std"] }
 serde_json = { version = "1.0.150" }
 tokio = { version = "1.52.3", features = ["fs", "macros", "process", "rt-multi-thread"] }

@@ -2,7 +2,7 @@ use std::process;
 
 use tracing::{Level, error};
 
-use crate::config::force_load_config;
+use crate::config::{CONFIG, force_load_config};
 
 mod backup;
 mod config;
@@ -20,8 +20,20 @@ async fn main() {
     )
     .unwrap();
 
-    if let Err(error) = backup::run().await {
-        error!("{error:?}");
-        process::exit(1);
+    if CONFIG.forever {
+        let scheduler = match backup::Scheduler::new() {
+            Ok(scheduler) => scheduler,
+            Err(error) => {
+                error!("{error:?}");
+                process::exit(1);
+            }
+        };
+
+        scheduler.run_forever().await;
+    } else {
+        if let Err(error) = backup::run().await {
+            error!("{error:?}");
+            process::exit(1);
+        }
     }
 }

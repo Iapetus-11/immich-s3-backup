@@ -5,6 +5,10 @@ use dotenvy::dotenv;
 
 #[derive(Debug, clap::Parser)]
 pub struct Config {
+    // CLI ---------------------------------------------------------------------
+    #[arg(long, default_value = "false")]
+    pub forever: bool,
+
     // Immich ------------------------------------------------------------------
     #[arg(long, env = "DB_HOST")]
     pub db_host: String,
@@ -38,7 +42,7 @@ pub struct Config {
     #[arg(
         long,
         env = "BACKUP_HISTORY_FILE",
-        default_value = "./backup-history.json"
+        default_value = "./backup-history.sqlite"
     )]
     pub history_file: PathBuf,
 

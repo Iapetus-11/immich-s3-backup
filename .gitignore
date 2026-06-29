@@ -3,3 +3,5 @@ target/
 backups/
 
 .env
+
+backup-history.sqlite
