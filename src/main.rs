@@ -21,15 +21,7 @@ async fn main() {
     .unwrap();
 
     if CONFIG.forever {
-        let scheduler = match backup::Scheduler::new() {
-            Ok(scheduler) => scheduler,
-            Err(error) => {
-                error!("{error:?}");
-                process::exit(1);
-            }
-        };
-
-        scheduler.run_forever().await;
+        backup::Scheduler.run_forever().await;
     } else {
         if let Err(error) = backup::run().await {
             error!("{error:?}");

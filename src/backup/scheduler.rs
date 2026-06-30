@@ -2,30 +2,25 @@ use std::time::Duration;
 
 use anyhow::Result;
 use anyhow::{Context, bail};
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use tokio::time::{self};
 use tracing::error;
 
 use crate::backup::runner;
 use crate::{backup::history::BackupHistoryManager, config::CONFIG};
 
-pub struct BackupScheduler {
-    last_backup_at: Option<DateTime<Utc>>,
-}
+pub struct BackupScheduler;
 
 impl BackupScheduler {
-    pub fn new() -> Result<Self> {
+    fn get_duration_until_next_backup(&self) -> Result<Duration> {
         let mut history = BackupHistoryManager::new().context("Opening backup history manager")?;
+
         let last_backup_at = history
             .get_last_entry()
             .context("Getting last entry")?
             .map(|e| e.started_at);
 
-        Ok(Self { last_backup_at })
-    }
-
-    fn get_duration_until_next_backup(&self) -> Result<Duration> {
-        let Some(last_backup_at) = self.last_backup_at else {
+        let Some(last_backup_at) = last_backup_at else {
             return Ok(Duration::ZERO);
         };
 

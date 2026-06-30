@@ -57,13 +57,19 @@ fn write_file_to_zip<'p, ZW: io::Write + io::Seek>(
     Ok(())
 }
 
-pub fn pack_zip(file_paths: &[&Path], output_zip_path: &Path) -> Result<()> {
+pub fn pack_zip(file_paths: &[&Path], output_zip_path: &Path, compress: bool) -> Result<()> {
     let mut output_file = File::create(output_zip_path)
         .with_context(|| format!("Creating file at {output_zip_path:?}"))?;
 
-    let zip_options = SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated)
-        .compression_level(Some(9));
+    let mut zip_options = SimpleFileOptions::default();
+    if compress {
+        zip_options = zip_options
+            .compression_method(zip::CompressionMethod::Deflated)
+            .compression_level(Some(9));
+    } else {
+        zip_options = zip_options.compression_method(zip::CompressionMethod::Stored);
+    }
+
     let mut zip_writer = ZipWriter::new(&mut output_file);
 
     let mut seen_dirs = HashSet::<&Path>::new();

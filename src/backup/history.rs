@@ -8,6 +8,8 @@ use crate::config::CONFIG;
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq, Debug)]
 pub struct BackupId(i64);
 
+// TODO: How to persist the backup-history.sqlite file in Docker?
+
 #[derive(Deserialize, Serialize)]
 pub struct BackupEntry {
     pub id: BackupId,
