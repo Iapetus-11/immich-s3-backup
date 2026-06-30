@@ -1,4 +1,4 @@
-FROM rust:1.91.1-alpine3.23 AS build
+FROM rust:1.95.0-alpine3.23 AS build
 
 WORKDIR /immich-s3-backup
 
