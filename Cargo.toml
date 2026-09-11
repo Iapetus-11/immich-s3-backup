@@ -4,16 +4,16 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-anyhow = "1.0.103"
-aws-config = { version = "1.8.18", features = ["behavior-version-latest"] }
-aws-sdk-s3 = "1.137.0"
+anyhow = "1.0.104"
+aws-config = { version = "1.12.0", features = ["behavior-version-latest"] }
+aws-sdk-s3 = "1.146.0"
 chrono = { version = "0.4.45", default-features = false, features = ["now", "serde"] }
-clap = { version = "4.6.1", default-features = false, features = ["std", "derive", "help", "suggestions", "env"] }
+clap = { version = "4.6.6", default-features = false, features = ["std", "derive", "help", "suggestions", "env"] }
 dotenvy = "0.15.7"
-rusqlite = { version = "0.40.1", features = ["bundled", "chrono"] }
-serde = { version = "1.0.228", default-features = false, features = ["derive", "std"] }
-serde_json = { version = "1.0.150" }
-tokio = { version = "1.52.3", features = ["fs", "macros", "process", "rt-multi-thread"] }
+rusqlite = { version = "0.40.2", features = ["bundled", "chrono"] }
+serde = { version = "1.0.229", default-features = false, features = ["derive", "std"] }
+serde_json = { version = "1.0.151" }
+tokio = { version = "1.53.1", features = ["fs", "macros", "process", "rt-multi-thread"] }
 tracing = "0.1.44"
 tracing-subscriber = "0.3.23"
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
