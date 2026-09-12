@@ -86,6 +86,9 @@ pub struct Config {
         value_parser = value_parser!(u64).range(1..)
     )]
     pub max_upload_retry_backoff: u64,
+
+    #[arg(long, env = "BACKUP_ZIP_PASSWORD")]
+    pub zip_password: String,
 }
 
 pub static CONFIG: LazyLock<Config> = LazyLock::new(|| {
