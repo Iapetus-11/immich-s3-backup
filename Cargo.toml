@@ -5,11 +5,13 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.104"
+async-stream = "0.3.6"
 aws-config = { version = "1.12.0", features = ["behavior-version-latest"] }
 aws-sdk-s3 = "1.146.0"
 chrono = { version = "0.4.45", default-features = false, features = ["now", "serde"] }
 clap = { version = "4.6.6", default-features = false, features = ["std", "derive", "help", "suggestions", "env"] }
 dotenvy = "0.15.7"
+futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
 rusqlite = { version = "0.40.2", features = ["bundled", "chrono"] }
 serde = { version = "1.0.229", default-features = false, features = ["derive", "std"] }
 serde_json = { version = "1.0.151" }
