@@ -1,5 +1,5 @@
 use async_stream::try_stream;
-use tracing::error;
+use tracing::{error, info};
 
 use crate::backup::history::BackupHistoryManager;
 
@@ -10,13 +10,12 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use chrono::Utc;
-use futures_util::{Stream, StreamExt, pin_mut};
+use futures_util::{Stream, StreamExt, TryStreamExt, pin_mut};
 use tokio::{
     fs::{self, File},
     process::Command,
-    task::{JoinSet, block_in_place, spawn_blocking},
+    task::{block_in_place, spawn_blocking},
 };
-use tracing::info;
 
 use crate::{
     backup::uploader::S3Uploader,
@@ -174,75 +173,103 @@ async fn backup_immich_folder(
     max_concurrent_uploads: u64,
     s3_uploader: &S3Uploader,
 ) -> Result<()> {
-    let mut upload_tasks = JoinSet::new();
+    let max_concurrent_uploads = usize::try_from(max_concurrent_uploads)
+        .context("Max concurrent uploads does not fit in usize")?;
+    if max_concurrent_uploads == 0 {
+        bail!("Max concurrent uploads must be greater than zero");
+    }
 
     let mut target_folder_path = upload_location.to_path_buf();
     target_folder_path.push(target_folder_name);
 
-    let batch_iterator = iter_folder_batches(&target_folder_path, max_batch_size_bytes).enumerate();
+    let batch_iterator =
+        iter_folder_batches(target_folder_path.clone(), max_batch_size_bytes).enumerate();
     pin_mut!(batch_iterator);
 
-    while let Some((batch_idx, batch_files_result)) = batch_iterator.next().await {
-        let batch_files = batch_files_result?; // TODO: Better error handling
+    // Preparing this stream packs one batch at a time. Each yielded future only
+    // performs an upload, so the buffer limits uploads without parallelizing ZIP work.
+    let upload_futures = try_stream! {
+        while let Some((batch_idx, batch_files_result)) = batch_iterator.next().await {
+            let batch_files = batch_files_result
+                .with_context(|| format!("Building batch {batch_idx} for {target_folder_path:?}"))?;
 
-        if upload_tasks.len() as u64 >= max_concurrent_uploads {
-            info!("Max concurrent uploads reached, waiting for a previous upload to finish...");
-            upload_tasks
-                .join_next()
-                .await
-                .unwrap() // TODO: Better error handling
-                .context("Upload batch background task")??;
+            let (zip_output_name, zip_output_path) = pack_batch_zip(
+                target_folder_name,
+                &target_folder_path,
+                batch_idx,
+                batch_files,
+                backup_output_folder,
+            )
+            .await
+            .with_context(|| format!("Packing batch {batch_idx} zip"))?;
+
+            yield upload_batch_zip(
+                s3_uploader.clone(),
+                target_folder_name.to_string(),
+                batch_idx,
+                zip_output_name,
+                zip_output_path,
+            );
         }
+    };
 
-        let (zip_output_name, zip_output_path) = pack_batch_zip(
-            target_folder_name,
-            &target_folder_path,
-            batch_idx,
-            batch_files,
-            backup_output_folder,
+    let upload_results = upload_futures.try_buffer_unordered(max_concurrent_uploads);
+    pin_mut!(upload_results);
+
+    // Drain every prepared upload so all temporary files are cleaned up. Return
+    // the first failure and log any additional failures encountered afterward.
+    let mut first_error = None;
+    while let Some(upload_result) = upload_results.next().await {
+        if let Err(upload_error) = upload_result {
+            if first_error.is_none() {
+                first_error = Some(upload_error);
+            } else {
+                error!("Additional batch failure: {upload_error:#}");
+            }
+        }
+    }
+
+    first_error.map_or(Ok(()), Err)
+}
+
+async fn upload_batch_zip(
+    s3_uploader: S3Uploader,
+    target_folder_name: String,
+    batch_idx: usize,
+    zip_output_name: String,
+    zip_output_path: PathBuf,
+) -> Result<()> {
+    let upload_result = s3_uploader
+        .upload_file(
+            &zip_output_path,
+            &format!("{target_folder_name}/{zip_output_name}"),
+            Some("application/zip".to_string()),
         )
         .await
-        .with_context(|| format!("Packing batch {batch_idx} zip"))?;
+        .with_context(|| format!("Upload batch {batch_idx}"));
 
-        upload_tasks.spawn({
-            let s3_uploader = s3_uploader.clone();
-            let target_folder_name = target_folder_name.to_string();
+    let cleanup_result = remove_file_if_exists(&zip_output_path).await;
 
-            async move {
-                s3_uploader
-                    .upload_file(
-                        &zip_output_path,
-                        &format!("{target_folder_name}/{zip_output_name}"),
-                        Some("application/zip".to_string()),
-                    )
-                    .await
-                    .with_context(|| format!("Upload batch {batch_idx}"))?;
-
-                fs::remove_file(&zip_output_path)
-                    .await
-                    .with_context(|| format!("Deleting {zip_output_path:?}"))?;
-
-                Ok(()) as Result<()>
-            }
-        });
+    match (upload_result, cleanup_result) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(upload_error), Ok(())) => Err(upload_error),
+        (Ok(()), Err(cleanup_error)) => Err(cleanup_error),
+        (Err(upload_error), Err(cleanup_error)) => {
+            error!("Failed to clean up batch {batch_idx} after upload failure: {cleanup_error:#}");
+            Err(upload_error)
+        }
     }
-
-    while let Some(next_task) = upload_tasks.join_next().await {
-        next_task.context("Upload batch background task")??;
-    }
-
-    Ok(())
 }
 
 fn iter_folder_batches(
-    target_folder_path: &Path,
+    target_folder_path: PathBuf,
     max_batch_size_bytes: u64,
-) -> impl Stream<Item = anyhow::Result<Vec<PathBuf>>> {
+) -> impl Stream<Item = Result<Vec<PathBuf>>> {
     try_stream! {
         let mut batch_files: Vec<PathBuf> = vec![];
         let mut batch_size_bytes = 0_u64;
 
-        let dir_reader = read_dir_recursive(target_folder_path);
+        let dir_reader = read_dir_recursive(&target_folder_path);
         pin_mut!(dir_reader);
 
         while let Some(file_path_result) = dir_reader.next().await {
@@ -254,9 +281,10 @@ fn iter_folder_batches(
                 .with_context(|| format!("Reading metadata for {file_path:?}"))?;
             let file_size = file_metadata.len();
 
-            if batch_size_bytes + file_size > max_batch_size_bytes {
-                yield batch_files;
-                batch_files = vec![];
+            if !batch_files.is_empty()
+                && batch_size_bytes.saturating_add(file_size) > max_batch_size_bytes
+            {
+                yield std::mem::take(&mut batch_files);
                 batch_size_bytes = 0;
             }
 
@@ -276,38 +304,49 @@ async fn pack_batch_zip(
     batch_idx: usize,
     batch_files: Vec<PathBuf>,
     backup_output_folder: &Path,
-) -> anyhow::Result<(String, PathBuf)> {
+) -> Result<(String, PathBuf)> {
     let zip_output_name = format!("{target_folder_name}-{batch_idx}.zip");
-    let zip_output_path = {
-        let mut path = backup_output_folder.to_path_buf();
-        path.push(&zip_output_name);
-        path
-    };
+    let zip_output_path = backup_output_folder.join(&zip_output_name);
 
-    {
-        let batch_files = batch_files.clone();
-        let zip_output_path = zip_output_path.clone();
-        let target_folder_path = target_folder_path.to_path_buf();
+    let zip_output_path_clone = zip_output_path.clone();
+    let zip_result_context = format!("Zipping {target_folder_path:?} (batch {batch_idx})");
+    let batch_zip_file_result: Result<_> = async {
         spawn_blocking(move || {
-            pack_zip(
-                &batch_files
-                    .iter()
-                    .map(std::path::PathBuf::as_path)
-                    .collect::<Vec<_>>(),
-                &zip_output_path,
-                false,
-            )
-            .with_context(|| format!("Zipping {target_folder_path:?} (batch {batch_idx})"))
+            let file_paths = batch_files.iter().map(PathBuf::as_path).collect::<Vec<_>>();
+            pack_zip(&file_paths, &zip_output_path_clone, false).context(zip_result_context)
         })
         .await
+        .with_context(|| {
+            format!("Executing zip of {target_folder_path:?} (batch {batch_idx})")
+        })??;
+
+        fs::metadata(&zip_output_path)
+            .await
+            .with_context(|| format!("Getting zip metadata for batch {batch_idx}"))
     }
-    .with_context(|| format!("Executing zip of {target_folder_path:?} (batch {batch_idx})"))??;
+    .await;
 
-    let batch_zip_size_bytes = zip_output_path
-        .metadata()
-        .with_context(|| format!("Getting zip metadata for batch {batch_idx}"))?
-        .len();
-    info!("Finished zipping batch {batch_idx} ({batch_zip_size_bytes} bytes)");
+    match batch_zip_file_result {
+        Ok(batch_zip_file_metadata) => {
+            info!(
+                "Finished zipping batch {batch_idx} ({} bytes)",
+                batch_zip_file_metadata.len()
+            );
+            Ok((zip_output_name, zip_output_path))
+        }
+        Err(pack_error) => {
+            if let Err(cleanup_error) = remove_file_if_exists(&zip_output_path).await {
+                error!("Failed to clean up incomplete zip {zip_output_path:?}: {cleanup_error:#}");
+            }
+            Err(pack_error)
+        }
+    }
+}
 
-    Ok((zip_output_name, zip_output_path))
+async fn remove_file_if_exists(path: &Path) -> Result<()> {
+    match fs::remove_file(path).await {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error).with_context(|| format!("Deleting file {path:?}")),
+    }
 }
