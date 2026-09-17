@@ -67,9 +67,9 @@ pub struct Config {
         long,
         env = "BACKUP_MAX_CONCURRENT_UPLOADS",
         default_value = "5",
-        value_parser = value_parser!(u64).range(1..)
+        value_parser = value_parser!(usize).range(1..)
     )]
-    pub max_concurrent_uploads: u64,
+    pub max_concurrent_uploads: usize,
 
     #[arg(
         long,

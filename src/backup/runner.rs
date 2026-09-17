@@ -14,7 +14,6 @@ use futures_util::{Stream, StreamExt, TryStreamExt, pin_mut};
 use tokio::{
     fs::{self, File},
     process::Command,
-    task::{block_in_place, spawn_blocking},
 };
 
 use crate::{
@@ -100,46 +99,73 @@ async fn dump_and_backup_immich_db(backup_folder: &Path, s3_uploader: &S3Uploade
         .await
         .with_context(|| format!("Creating {DB_BACKUP_FILENAME}"))?;
 
-    let pg_dumpall_output = Command::new("pg_dumpall")
+    let pg_dumpall_result = Command::new("pg_dumpall")
         .arg("--clean")
         .arg("--if-exists")
-        .arg(format!("--host={}", CONFIG.db_host)) // TODO: Does this support port?
+        .arg(format!("--host={}", CONFIG.db_host)) // TODO: Parse & support port numbers
         .arg(format!("--username={}", CONFIG.db_username))
         .env("PGPASSWORD", &CONFIG.db_password)
         .stdout(dump_file.into_std().await)
         .status()
         .await
-        .with_context(|| "Running pg_dumpall".to_string())?;
+        .with_context(|| "Running pg_dumpall".to_string());
 
-    if !pg_dumpall_output.success() {
-        bail!("Failed to run pg_dumpall");
+    let pg_dumpall_result = match pg_dumpall_result {
+        Ok(pg_dumpall_output) => {
+            if !pg_dumpall_output.success() {
+                let error_code = pg_dumpall_output
+                    .code()
+                    .map(|code| code.to_string())
+                    .unwrap_or_else(|| "unknown".to_string());
+                bail!("Error exit code from pg_dumpall: {error_code}")
+            } else {
+                Ok(())
+            }
+        }
+        Err(error) => Err(error),
+    };
+
+    if let Err(pg_dumpall_error) = pg_dumpall_result {
+        let rm_dump_file_result = remove_file_if_exists(&dump_file_path).await;
+        if let Err(rm_dump_file_error) = rm_dump_file_result {
+            error!("Failed to clean up dump file: {rm_dump_file_error}");
+        }
+
+        return Err(pg_dumpall_error);
     }
 
     let dump_file_zip_name = format!("{DB_BACKUP_FILENAME}.zip");
     let dump_file_zip_path = dump_file_path.with_file_name(&dump_file_zip_name);
 
-    pack_zip(vec![dump_file_path.clone()], &dump_file_zip_path, true)
-        .await
-        .context("Zipping database dump")?;
+    let pack_and_upload_result: Result<()> = async {
+        pack_zip(vec![dump_file_path.clone()], &dump_file_zip_path, true)
+            .await
+            .context("Zipping database dump")?;
 
-    fs::remove_file(&dump_file_path)
-        .await
-        .with_context(|| format!("Removing {dump_file_path:?}"))?;
+        s3_uploader
+            .upload_file(
+                &dump_file_zip_path,
+                &dump_file_zip_name,
+                Some("application/zip".to_string()),
+            )
+            .await
+            .context("Uploading database dump")?;
 
-    s3_uploader
-        .upload_file(
-            &dump_file_zip_path,
-            &dump_file_zip_name,
-            Some("application/zip".to_string()),
-        )
-        .await
-        .context("Uploading database dump")?;
+        Ok(())
+    }
+    .await;
 
-    fs::remove_file(&dump_file_zip_path)
-        .await
-        .with_context(|| format!("Removing {dump_file_zip_path:?}"))?;
+    let rm_dump_file_result = remove_file_if_exists(&dump_file_path).await;
+    if let Err(rm_dump_file_error) = rm_dump_file_result {
+        error!("Failed to clean up dump file: {rm_dump_file_error}");
+    }
 
-    Ok(())
+    let rm_dump_zip_file_result = remove_file_if_exists(&dump_file_zip_path).await;
+    if let Err(rm_dump_zip_file_error) = rm_dump_zip_file_result {
+        error!("Failed to clean up dump zip file: {rm_dump_zip_file_error}");
+    }
+
+    pack_and_upload_result
 }
 
 async fn backup_all_immich_folders(
@@ -165,20 +191,16 @@ async fn backup_all_immich_folders(
     Ok(())
 }
 
+// TODO: Progress bar?
+
 async fn backup_immich_folder(
     backup_output_folder: &Path,
     upload_location: &Path,
     target_folder_name: &str,
     max_batch_size_bytes: u64,
-    max_concurrent_uploads: u64,
+    max_concurrent_uploads: usize,
     s3_uploader: &S3Uploader,
 ) -> Result<()> {
-    let max_concurrent_uploads = usize::try_from(max_concurrent_uploads)
-        .context("Max concurrent uploads does not fit in usize")?;
-    if max_concurrent_uploads == 0 {
-        bail!("Max concurrent uploads must be greater than zero");
-    }
-
     let mut target_folder_path = upload_location.to_path_buf();
     target_folder_path.push(target_folder_name);
 
@@ -249,16 +271,11 @@ async fn upload_batch_zip(
         .with_context(|| format!("Upload batch {batch_idx}"));
 
     let cleanup_result = remove_file_if_exists(&zip_output_path).await;
-
-    match (upload_result, cleanup_result) {
-        (Ok(()), Ok(())) => Ok(()),
-        (Err(upload_error), Ok(())) => Err(upload_error),
-        (Ok(()), Err(cleanup_error)) => Err(cleanup_error),
-        (Err(upload_error), Err(cleanup_error)) => {
-            error!("Failed to clean up batch {batch_idx} after upload failure: {cleanup_error:#}");
-            Err(upload_error)
-        }
+    if let Err(cleanup_error) = cleanup_result {
+        error!("Failed to cleanup uploaded zip file {zip_output_path:?}");
     }
+
+    upload_result
 }
 
 fn iter_folder_batches(
@@ -313,7 +330,7 @@ async fn pack_batch_zip(
         .with_context(|| format!("Zipping {target_folder_path:?} (batch {batch_idx})"));
 
     match batch_zip_file_result {
-        Ok(batch_zip_file_metadata) => {
+        Ok(_) => {
             let batch_zip_file_size = fs::metadata(&zip_output_path)
                 .await
                 .map(|metadata| format!("{} bytes", metadata.len()))
