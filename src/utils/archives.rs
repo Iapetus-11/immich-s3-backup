@@ -2,15 +2,31 @@ use std::{
     collections::HashSet,
     fs::{File, remove_file},
     io::{self, Read, Write},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use anyhow::{Context, Result};
+use tokio::task::spawn_blocking;
 use zip::{ZipWriter, write::FileOptions};
 
 use crate::config::CONFIG;
 
-pub fn pack_zip(file_paths: &[&Path], output_zip_path: &Path, compress: bool) -> Result<()> {
+pub async fn pack_zip(
+    file_paths: Vec<PathBuf>,
+    output_zip_path: &Path,
+    compress: bool,
+) -> Result<()> {
+    let output_zip_path_clone = output_zip_path.to_path_buf();
+    spawn_blocking(move || {
+        let file_paths = file_paths.iter().map(PathBuf::as_path).collect::<Vec<_>>();
+        _pack_zip(&file_paths, &output_zip_path_clone, compress)
+    })
+    .await
+    .with_context(|| format!("Failed to pack zip file {output_zip_path:?}"))??;
+    Ok(())
+}
+
+fn _pack_zip(file_paths: &[&Path], output_zip_path: &Path, compress: bool) -> Result<()> {
     let mut output_file = File::create(output_zip_path)
         .with_context(|| format!("Creating file at {output_zip_path:?}"))?;
 

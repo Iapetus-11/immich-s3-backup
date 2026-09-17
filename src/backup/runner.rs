@@ -308,17 +308,10 @@ async fn pack_batch_zip(
     let zip_output_name = format!("{target_folder_name}-{batch_idx}.zip");
     let zip_output_path = backup_output_folder.join(&zip_output_name);
 
-    let zip_output_path_clone = zip_output_path.clone();
-    let zip_result_context = format!("Zipping {target_folder_path:?} (batch {batch_idx})");
     let batch_zip_file_result: Result<_> = async {
-        spawn_blocking(move || {
-            let file_paths = batch_files.iter().map(PathBuf::as_path).collect::<Vec<_>>();
-            pack_zip(&file_paths, &zip_output_path_clone, false).context(zip_result_context)
-        })
-        .await
-        .with_context(|| {
-            format!("Executing zip of {target_folder_path:?} (batch {batch_idx})")
-        })??;
+        pack_zip(batch_files, &zip_output_path, false)
+            .await
+            .with_context(|| format!("Zipping {target_folder_path:?} (batch {batch_idx})"))?;
 
         fs::metadata(&zip_output_path)
             .await
