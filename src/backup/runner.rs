@@ -118,9 +118,9 @@ async fn dump_and_backup_immich_db(backup_folder: &Path, s3_uploader: &S3Uploade
     let dump_file_zip_name = format!("{DB_BACKUP_FILENAME}.zip");
     let dump_file_zip_path = dump_file_path.with_file_name(&dump_file_zip_name);
 
-    block_in_place(|| -> Result<_> {
-        pack_zip(&[&dump_file_path], &dump_file_zip_path, true).context("Zipping database dump")
-    })?;
+    pack_zip(vec![dump_file_path.clone()], &dump_file_zip_path, true)
+        .await
+        .context("Zipping database dump")?;
 
     fs::remove_file(&dump_file_path)
         .await
@@ -308,29 +308,26 @@ async fn pack_batch_zip(
     let zip_output_name = format!("{target_folder_name}-{batch_idx}.zip");
     let zip_output_path = backup_output_folder.join(&zip_output_name);
 
-    let batch_zip_file_result: Result<_> = async {
-        pack_zip(batch_files, &zip_output_path, false)
-            .await
-            .with_context(|| format!("Zipping {target_folder_path:?} (batch {batch_idx})"))?;
-
-        fs::metadata(&zip_output_path)
-            .await
-            .with_context(|| format!("Getting zip metadata for batch {batch_idx}"))
-    }
-    .await;
+    let batch_zip_file_result = pack_zip(batch_files, &zip_output_path, false)
+        .await
+        .with_context(|| format!("Zipping {target_folder_path:?} (batch {batch_idx})"));
 
     match batch_zip_file_result {
         Ok(batch_zip_file_metadata) => {
-            info!(
-                "Finished zipping batch {batch_idx} ({} bytes)",
-                batch_zip_file_metadata.len()
-            );
+            let batch_zip_file_size = fs::metadata(&zip_output_path)
+                .await
+                .map(|metadata| format!("{} bytes", metadata.len()))
+                .unwrap_or_else(|_| "failed to determine size".to_string());
+
+            info!("Finished zipping batch {batch_idx} ({batch_zip_file_size})");
+
             Ok((zip_output_name, zip_output_path))
         }
         Err(pack_error) => {
             if let Err(cleanup_error) = remove_file_if_exists(&zip_output_path).await {
                 error!("Failed to clean up incomplete zip {zip_output_path:?}: {cleanup_error:#}");
             }
+
             Err(pack_error)
         }
     }
