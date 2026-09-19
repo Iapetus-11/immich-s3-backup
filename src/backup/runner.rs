@@ -1,7 +1,7 @@
 use async_stream::try_stream;
 use tracing::{error, info};
 
-use crate::backup::history::BackupHistoryManager;
+use crate::{backup::history::BackupHistoryManager, utils::files::FileEntry};
 
 use std::{
     env,
@@ -19,9 +19,7 @@ use tokio::{
 use crate::{
     backup::uploader::S3Uploader,
     config::CONFIG,
-    utils::{
-        archives::pack_zip, aws_s3::initialize_s3_client, recursive_dir_reader::read_dir_recursive,
-    },
+    utils::{archives::pack_zip, aws_s3::initialize_s3_client, files::read_dir_recursive},
 };
 
 pub async fn run() -> Result<()> {
@@ -135,13 +133,17 @@ async fn dump_and_backup_immich_db(backup_folder: &Path, s3_uploader: &S3Uploade
     let dump_file_zip_path = dump_file_path.with_file_name(&dump_file_zip_name);
 
     let pack_and_upload_result: Result<()> = async {
-        pack_zip(vec![dump_file_path.clone()], &dump_file_zip_path, true)
+        let dump_file_entry = FileEntry::from_path(dump_file_path.clone())
+            .await
+            .context("Getting file entry for database dump file")?;
+
+        pack_zip(vec![dump_file_entry.clone()], &dump_file_zip_path, true)
             .await
             .context("Zipping database dump")?;
 
         s3_uploader
             .upload_file(
-                &dump_file_zip_path,
+                &dump_file_entry,
                 &dump_file_zip_name,
                 Some("application/zip".to_string()),
             )
@@ -219,12 +221,14 @@ async fn backup_immich_folder(
             .await
             .with_context(|| format!("Packing batch {batch_idx} zip"))?;
 
+            let zip_output_file = FileEntry::from_path(zip_output_path).await.with_context(|| format!("Failed to get file entry for {zip_output_name}"))?;
+
             yield upload_batch_zip(
                 s3_uploader.clone(),
                 target_folder_name.to_string(),
                 batch_idx,
                 zip_output_name,
-                zip_output_path,
+                zip_output_file,
             );
         }
     };
@@ -251,20 +255,20 @@ async fn upload_batch_zip(
     target_folder_name: String,
     batch_idx: usize,
     zip_output_name: String,
-    zip_output_path: PathBuf,
+    zip_output_file: FileEntry,
 ) -> Result<()> {
     let upload_result = s3_uploader
         .upload_file(
-            &zip_output_path,
+            &zip_output_file,
             &format!("{target_folder_name}/{zip_output_name}"),
             Some("application/zip".to_string()),
         )
         .await
         .with_context(|| format!("Upload batch {batch_idx}"));
 
-    let cleanup_result = remove_file_if_exists(&zip_output_path).await;
+    let cleanup_result = remove_file_if_exists(&zip_output_file.path).await;
     if let Err(cleanup_error) = cleanup_result {
-        error!("Failed to cleanup uploaded zip file {zip_output_path:?}: {cleanup_error:?}");
+        error!("Failed to cleanup uploaded zip file {zip_output_file}: {cleanup_error:?}");
     }
 
     upload_result
@@ -273,22 +277,19 @@ async fn upload_batch_zip(
 fn iter_folder_batches(
     target_folder_path: PathBuf,
     max_batch_size_bytes: u64,
-) -> impl Stream<Item = Result<Vec<PathBuf>>> {
+) -> impl Stream<Item = Result<Vec<FileEntry>>> {
     try_stream! {
-        let mut batch_files: Vec<PathBuf> = vec![];
+        let mut batch_files: Vec<FileEntry> = vec![];
         let mut batch_size_bytes = 0_u64;
 
         let dir_reader = read_dir_recursive(&target_folder_path);
         pin_mut!(dir_reader);
 
-        while let Some(file_path_result) = dir_reader.next().await {
-            let file_path = file_path_result
+        while let Some(file_result) = dir_reader.next().await {
+            let file = file_result
                 .with_context(|| format!("Reading file entry from {target_folder_path:?}"))?;
 
-            let file_metadata = tokio::fs::metadata(&file_path)
-                .await
-                .with_context(|| format!("Reading metadata for {file_path:?}"))?;
-            let file_size = file_metadata.len();
+            let file_size = file.metadata.len();
 
             if !batch_files.is_empty()
                 && batch_size_bytes.saturating_add(file_size) > max_batch_size_bytes
@@ -297,7 +298,7 @@ fn iter_folder_batches(
                 batch_size_bytes = 0;
             }
 
-            batch_files.push(file_path);
+            batch_files.push(file);
             batch_size_bytes += file_size;
         }
 
@@ -311,7 +312,7 @@ async fn pack_batch_zip(
     target_folder_name: &str,
     target_folder_path: &Path,
     batch_idx: usize,
-    batch_files: Vec<PathBuf>,
+    batch_files: Vec<FileEntry>,
     backup_output_folder: &Path,
 ) -> Result<(String, PathBuf)> {
     let zip_output_name = format!("{target_folder_name}-{batch_idx}.zip");
