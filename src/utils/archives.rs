@@ -7,7 +7,9 @@ use std::{
 
 use anyhow::{Context, Result};
 use tokio::task::spawn_blocking;
-use zip::{ZipWriter, write::FileOptions};
+use zip::{ZIP64_BYTES_THR, ZipWriter, write::SimpleFileOptions};
+
+use tracing::error;
 
 use crate::config::CONFIG;
 
@@ -34,18 +36,9 @@ fn _pack_zip(file_paths: &[&Path], output_zip_path: &Path, compress: bool) -> Re
 
     let mut zip_writer = ZipWriter::new(&mut output_file);
 
-    let mut seen_dirs = HashSet::<&Path>::new();
-    let mut file_buffer = vec![0_u8; 2_usize.pow(20)].into_boxed_slice(); // 1MB
-
     let mut last_result = Ok(());
     for file_path in file_paths {
-        last_result = write_file_to_zip(
-            file_path,
-            &mut zip_writer,
-            &zip_options,
-            &mut file_buffer,
-            &mut seen_dirs,
-        );
+        last_result = write_file_to_zip(file_path, &mut zip_writer, zip_options);
 
         if last_result.is_err() {
             let _ = remove_file(output_zip_path);
@@ -61,8 +54,8 @@ fn _pack_zip(file_paths: &[&Path], output_zip_path: &Path, compress: bool) -> Re
     })
 }
 
-fn get_file_options(compress: bool) -> FileOptions<'static, ()> {
-    let mut options = FileOptions::<()>::default();
+fn get_file_options(compress: bool) -> SimpleFileOptions {
+    let mut options = SimpleFileOptions::default();
 
     if compress {
         options = options
@@ -77,51 +70,28 @@ fn get_file_options(compress: bool) -> FileOptions<'static, ()> {
     options
 }
 
-fn write_file_to_zip<'p, 'o, ZW: io::Write + io::Seek>(
-    file_path: &'p Path,
+fn write_file_to_zip<ZW: io::Write + io::Seek>(
+    file_path: &Path,
     zip_writer: &mut ZipWriter<ZW>,
-    options: &FileOptions<'o, ()>,
-    file_buffer: &mut [u8],
-    seen_dirs: &mut HashSet<&'p Path>,
+    mut options: SimpleFileOptions,
 ) -> Result<()> {
-    ensure_file_parent_dir_in_zip(file_path, zip_writer, options, seen_dirs)?;
-
     zip_writer
-        .start_file_from_path(file_path, *options)
+        .start_file_from_path(file_path, options)
         .with_context(|| format!("Starting file {file_path:?}"))?;
 
     let mut file = File::open(file_path).with_context(|| format!("Opening {file_path:?}"))?;
 
-    loop {
-        let read_count = file
-            .read(file_buffer)
-            .with_context(|| format!("Reading {file_path:?}"))?;
-        if read_count == 0 {
-            break;
+    let metadata_result = file.metadata();
+    match metadata_result {
+        Ok(metadata) => {
+            options = options.large_file(metadata.len() >= ZIP64_BYTES_THR);
         }
-
-        zip_writer
-            .write_all(&file_buffer[0..read_count])
-            .with_context(|| format!("Writing buffered data from {file_path:?}"))?;
+        Err(error) => {
+            error!("Failed to read {file_path:?} metadata (cannot determine large_file zip flag)");
+        }
     }
+
+    io::copy(&mut file, zip_writer).context("Copying data from {file_path:?} into zip")?;
 
     Ok(())
-}
-
-fn ensure_file_parent_dir_in_zip<'p, 'o, ZW: io::Write + io::Seek>(
-    file_path: &'p Path,
-    zip_writer: &mut ZipWriter<ZW>,
-    options: &FileOptions<'o, ()>,
-    seen_dirs: &mut HashSet<&'p Path>,
-) -> Result<()> {
-    let dir_path = file_path.parent().unwrap();
-
-    if seen_dirs.contains(dir_path) {
-        return Ok(());
-    }
-
-    seen_dirs.insert(dir_path);
-    zip_writer
-        .add_directory_from_path(dir_path, *options)
-        .with_context(|| format!("Adding directory {dir_path:?}"))
 }

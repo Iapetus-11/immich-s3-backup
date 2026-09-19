@@ -55,14 +55,12 @@ pub async fn run() -> Result<()> {
     Ok(())
 }
 
-// TODO: Cleanup temp files on failures
-
 async fn backup_database_and_folders() -> Result<()> {
     info!("Backing up Immich...");
 
     let backup_name = Utc::now().format("%Y-%m-%d_%H-%M-%S").to_string();
-    let mut backup_folder = env::temp_dir();
-    backup_folder.extend(["backups", &backup_name]);
+
+    let backup_folder = env::temp_dir().join("backups").join(&backup_name);
 
     fs::create_dir_all(&backup_folder)
         .await
@@ -93,8 +91,7 @@ async fn dump_and_backup_immich_db(backup_folder: &Path, s3_uploader: &S3Uploade
 
     info!("Dumping immich database...");
 
-    let mut dump_file_path = PathBuf::from(backup_folder);
-    dump_file_path.push(DB_BACKUP_FILENAME);
+    let dump_file_path = PathBuf::from(backup_folder).join(DB_BACKUP_FILENAME);
     let dump_file = File::create(&dump_file_path)
         .await
         .with_context(|| format!("Creating {DB_BACKUP_FILENAME}"))?;
@@ -191,8 +188,6 @@ async fn backup_all_immich_folders(
     Ok(())
 }
 
-// TODO: Progress bar?
-
 async fn backup_immich_folder(
     backup_output_folder: &Path,
     upload_location: &Path,
@@ -201,8 +196,7 @@ async fn backup_immich_folder(
     max_concurrent_uploads: usize,
     s3_uploader: &S3Uploader,
 ) -> Result<()> {
-    let mut target_folder_path = upload_location.to_path_buf();
-    target_folder_path.push(target_folder_name);
+    let target_folder_path = upload_location.to_path_buf().join(target_folder_name);
 
     let batch_iterator =
         iter_folder_batches(target_folder_path.clone(), max_batch_size_bytes).enumerate();

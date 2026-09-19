@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use async_stream::try_stream;
+use async_stream::stream;
 use futures_util::Stream;
 use tokio::{fs, io};
 
@@ -9,7 +9,7 @@ pub fn read_dir_recursive(
 ) -> impl Stream<Item = Result<PathBuf, io::Error>> {
     let root = path.as_ref().to_path_buf();
 
-    try_stream! {
+    stream! {
         let mut directories = vec![root];
 
         while let Some(directory) = directories.pop() {
@@ -21,8 +21,8 @@ pub fn read_dir_recursive(
                 if file_type.is_dir() {
                     directories.push(entry.path());
                 } else {
-                    // TODO: symlinks are not followed, should we?
-                    yield entry.path();
+                    // Symlinks are not followed
+                    yield Ok(entry.path());
                 }
             }
         }
