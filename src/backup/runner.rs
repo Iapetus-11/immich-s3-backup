@@ -42,13 +42,13 @@ pub async fn run() -> Result<()> {
     let result = backup_database_and_folders().await;
     if let Err(error) = result {
         if let Err(error) = history.finish_entry(&history_entry_id, true) {
-            error!("Failed to finish history entry: {error}");
+            error!("Failed to finish history entry: {error:?}");
         }
 
         return Err(error.context("Failed to backup"));
     } else {
         if let Err(error) = history.finish_entry(&history_entry_id, false) {
-            error!("Failed to finish history entry: {error}");
+            error!("Failed to finish history entry: {error:?}");
         }
     }
 
@@ -128,7 +128,7 @@ async fn dump_and_backup_immich_db(backup_folder: &Path, s3_uploader: &S3Uploade
     if let Err(pg_dumpall_error) = pg_dumpall_result {
         let rm_dump_file_result = remove_file_if_exists(&dump_file_path).await;
         if let Err(rm_dump_file_error) = rm_dump_file_result {
-            error!("Failed to clean up dump file: {rm_dump_file_error}");
+            error!("Failed to clean up dump file: {rm_dump_file_error:?}");
         }
 
         return Err(pg_dumpall_error);
@@ -157,12 +157,12 @@ async fn dump_and_backup_immich_db(backup_folder: &Path, s3_uploader: &S3Uploade
 
     let rm_dump_file_result = remove_file_if_exists(&dump_file_path).await;
     if let Err(rm_dump_file_error) = rm_dump_file_result {
-        error!("Failed to clean up dump file: {rm_dump_file_error}");
+        error!("Failed to clean up dump file: {rm_dump_file_error:?}");
     }
 
     let rm_dump_zip_file_result = remove_file_if_exists(&dump_file_zip_path).await;
     if let Err(rm_dump_zip_file_error) = rm_dump_zip_file_result {
-        error!("Failed to clean up dump zip file: {rm_dump_zip_file_error}");
+        error!("Failed to clean up dump zip file: {rm_dump_zip_file_error:?}");
     }
 
     pack_and_upload_result
@@ -238,15 +238,13 @@ async fn backup_immich_folder(
     let upload_results = upload_futures.try_buffer_unordered(max_concurrent_uploads);
     pin_mut!(upload_results);
 
-    // Drain every prepared upload so all temporary files are cleaned up. Return
-    // the first failure and log any additional failures encountered afterward.
     let mut first_error = None;
     while let Some(upload_result) = upload_results.next().await {
         if let Err(upload_error) = upload_result {
+            error!("Error while uploading batch: {upload_error:?}");
+
             if first_error.is_none() {
                 first_error = Some(upload_error);
-            } else {
-                error!("Additional batch failure: {upload_error:#}");
             }
         }
     }
@@ -272,7 +270,7 @@ async fn upload_batch_zip(
 
     let cleanup_result = remove_file_if_exists(&zip_output_path).await;
     if let Err(cleanup_error) = cleanup_result {
-        error!("Failed to cleanup uploaded zip file {zip_output_path:?}");
+        error!("Failed to cleanup uploaded zip file {zip_output_path:?}: {cleanup_error:?}");
     }
 
     upload_result
@@ -342,7 +340,7 @@ async fn pack_batch_zip(
         }
         Err(pack_error) => {
             if let Err(cleanup_error) = remove_file_if_exists(&zip_output_path).await {
-                error!("Failed to clean up incomplete zip {zip_output_path:?}: {cleanup_error:#}");
+                error!("Failed to clean up incomplete zip {zip_output_path:?}: {cleanup_error:?}");
             }
 
             Err(pack_error)
