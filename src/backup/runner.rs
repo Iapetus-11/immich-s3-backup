@@ -14,6 +14,7 @@ use futures_util::{Stream, StreamExt, TryStreamExt, pin_mut};
 use tokio::{
     fs::{self, File},
     process::Command,
+    task::JoinSet,
 };
 
 use crate::{
@@ -204,12 +205,14 @@ async fn backup_immich_folder(
         iter_folder_batches(target_folder_path.clone(), max_batch_size_bytes).enumerate();
     pin_mut!(batch_iterator);
 
-    // Preparing this stream packs one batch at a time. Each yielded future only
-    // performs an upload, so the buffer limits uploads without parallelizing ZIP work.
-    let upload_futures = try_stream! {
+    let upload_tasks = JoinSet::<Result<()>>::new();
+    let mut zip_cleanup_path = Option::<PathBuf>::None;
+
+    let uploads_result: Result<()> = async {
         while let Some((batch_idx, batch_files_result)) = batch_iterator.next().await {
-            let batch_files = batch_files_result
-                .with_context(|| format!("Building batch {batch_idx} for {target_folder_path:?}"))?;
+            let batch_files = batch_files_result.with_context(|| {
+                format!("Building batch {batch_idx} for {target_folder_path:?}")
+            })?;
 
             let (zip_output_name, zip_output_path) = pack_batch_zip(
                 target_folder_name,
@@ -220,60 +223,43 @@ async fn backup_immich_folder(
             )
             .await
             .with_context(|| format!("Packing batch {batch_idx} zip"))?;
+            zip_cleanup_path = Some(zip_output_path.clone());
 
-            let zip_output_file = FileEntry::from_path(zip_output_path)
+            let zip_output_file = FileEntry::from_path(zip_output_path.clone())
                 .await
                 .with_context(|| format!("Failed to get file entry for {zip_output_name}"))?;
 
-            yield upload_batch_zip(
-                s3_uploader.clone(),
-                target_folder_name.to_string(),
-                batch_idx,
-                zip_output_name,
-                zip_output_file,
-            );
+            s3_uploader
+                .upload_file(
+                    &zip_output_file,
+                    &format!("{target_folder_name}/{zip_output_name}"),
+                    Some("application/zip".to_string()),
+                )
+                .await
+                .with_context(|| format!("Upload batch {batch_idx}"))?;
+
+            zip_cleanup_path = None;
+            fs::remove_file(&zip_output_file.path)
+                .await
+                .with_context(|| {
+                    format!("Failed to delete uploaded batch zip {zip_output_path:?}")
+                })?;
         }
-    };
 
-    let upload_results = upload_futures.try_buffer_unordered(max_concurrent_uploads);
-    pin_mut!(upload_results);
+        Ok(())
+    }
+    .await;
 
-    let mut first_error = None;
-    while let Some(upload_result) = upload_results.next().await {
-        if let Err(upload_error) = upload_result {
-            error!("Error while uploading batch: {upload_error:?}");
-
-            if first_error.is_none() {
-                first_error = Some(upload_error);
-            }
+    if uploads_result.is_err()
+        && let Some(zip_cleanup_path) = zip_cleanup_path
+    {
+        let cleanup_result = remove_file_if_exists(&zip_cleanup_path).await;
+        if let Err(cleanup_error) = cleanup_result {
+            error!("Failed to cleanup zip: {cleanup_error:?}")
         }
     }
 
-    first_error.map_or(Ok(()), Err)
-}
-
-async fn upload_batch_zip(
-    s3_uploader: S3Uploader,
-    target_folder_name: String,
-    batch_idx: usize,
-    zip_output_name: String,
-    zip_output_file: FileEntry,
-) -> Result<()> {
-    let upload_result = s3_uploader
-        .upload_file(
-            &zip_output_file,
-            &format!("{target_folder_name}/{zip_output_name}"),
-            Some("application/zip".to_string()),
-        )
-        .await
-        .with_context(|| format!("Upload batch {batch_idx}"));
-
-    let cleanup_result = remove_file_if_exists(&zip_output_file.path).await;
-    if let Err(cleanup_error) = cleanup_result {
-        error!("Failed to cleanup uploaded zip file {zip_output_file}: {cleanup_error:?}");
-    }
-
-    upload_result
+    uploads_result
 }
 
 fn iter_folder_batches(

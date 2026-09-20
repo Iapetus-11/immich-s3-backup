@@ -73,7 +73,7 @@ pub struct Config {
 
     #[arg(
         long,
-        env = "BACKUP_MAX_CONCURRENT_UPLOADS",
+        env = "BACKUP_CONCURRENT_FILE_UPLOADS",
         default_value = "3",
         value_parser = value_parser!(u64).range(1..)
     )]
