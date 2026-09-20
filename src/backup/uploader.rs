@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use aws_sdk_s3::primitives::{ByteStream, Length};
 use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
-use tracing::info;
+use tracing::{error, info};
 
 use crate::config::CONFIG;
 use crate::utils::files::FileEntry;
@@ -52,58 +52,78 @@ impl S3Uploader {
 
         let mut parts: Vec<CompletedPart> = Vec::with_capacity(part_count as usize);
 
-        for part_idx in 0..=part_count {
-            let byte_stream_length = if part_idx == part_count {
-                Length::UpTo(CONFIG.multipart_chunk_size)
-            } else {
-                Length::Exact(CONFIG.multipart_chunk_size)
-            };
+        let upload_result: Result<()> = async {
+            for part_idx in 1..=part_count {
+                let byte_stream_length = if part_idx == part_count {
+                    Length::UpTo(CONFIG.multipart_chunk_size)
+                } else {
+                    Length::Exact(CONFIG.multipart_chunk_size)
+                };
 
-            let byte_stream = ByteStream::read_from()
-                .path(&file.path)
-                .offset(part_idx * CONFIG.multipart_chunk_size)
-                .length(byte_stream_length)
-                .build()
-                .await
-                .with_context(|| format!("Creating ByteStream from file {file}"))?;
+                let byte_stream = ByteStream::read_from()
+                    .path(&file.path)
+                    .offset((part_idx - 1) * CONFIG.multipart_chunk_size)
+                    .length(byte_stream_length)
+                    .build()
+                    .await
+                    .with_context(|| format!("Creating ByteStream from file {file}"))?;
 
-            let upload_response = self
+                let upload_response = self
+                    .s3_client
+                    .upload_part()
+                    .bucket(&self.bucket_name)
+                    .key(key)
+                    .upload_id(&upload_id)
+                    .part_number(part_idx as i32)
+                    .body(byte_stream)
+                    .send()
+                    .await
+                    .with_context(|| format!("Uploading part {part_idx} from file {file}"))?;
+
+                parts.push(
+                    CompletedPart::builder()
+                        .e_tag(upload_response.e_tag().unwrap_or_default())
+                        .part_number(part_idx as i32)
+                        .build(),
+                );
+            }
+
+            let complete_input = CompletedMultipartUpload::builder()
+                .set_parts(Some(parts))
+                .build();
+
+            self
                 .s3_client
-                .upload_part()
+                .complete_multipart_upload()
                 .bucket(&self.bucket_name)
                 .key(key)
                 .upload_id(&upload_id)
-                .part_number(part_idx as i32)
-                .body(byte_stream)
+                .multipart_upload(complete_input)
                 .send()
                 .await
-                .with_context(|| format!("Uploading part {part_idx} from file {file}"))?;
+                .with_context(|| format!("Finalizing multipart upload for file {file}"))?;
 
-            parts.push(
-                CompletedPart::builder()
-                    .e_tag(upload_response.e_tag().unwrap_or_default())
-                    .part_number(part_idx as i32)
-                    .build(),
-            );
+            Ok(())
+        }
+        .await;
+
+        if upload_result.is_err() {
+            let cleanup_result = self
+                .s3_client
+                .abort_multipart_upload()
+                .bucket(&self.bucket_name)
+                .key(key)
+                .upload_id(upload_id)
+                .send()
+                .await;
+
+            if let Err(cleanup_error) = cleanup_result {
+                error!("Failed to abort multipart upload: {cleanup_error:?}");
+            }
+        } else {
+            info!("Done uploading {file}");
         }
 
-        let complete_input = CompletedMultipartUpload::builder()
-            .set_parts(Some(parts))
-            .build();
-
-        let _complete_response = self
-            .s3_client
-            .complete_multipart_upload()
-            .bucket(&self.bucket_name)
-            .key(key)
-            .upload_id(&upload_id)
-            .multipart_upload(complete_input)
-            .send()
-            .await
-            .with_context(|| format!("Finalizing multipart upload for file {file}"))?;
-
-        info!("Done uploading {file}");
-
-        Ok(())
+        upload_result
     }
 }

@@ -57,18 +57,18 @@ pub struct Config {
     #[arg(
         long,
         env = "BACKUP_BATCH_SIZE_BYTES",
-        default_value = "2684354560",
-        value_parser = value_parser!(u64).range(1000000..)
+        default_value = "5368709120", // 5 GiB
+        value_parser = value_parser!(u64).range(5 * 1024 * 1024..)
     )]
-    /// Exceeding 2.5 GiB may cause uploads to fail
     pub max_batch_size_bytes: u64,
 
     #[arg(
         long,
         env = "BACKUP_MULTIPART_CHUNK_SIZE",
-        default_value = "8388608", // 8MiB
+        default_value = "67110000", // 64 MiB
         value_parser = value_parser!(u64).range(5 * 1024 * 1024..=5 * 1024 * 1024 * 1024)
     )]
+    /// Exceeding 2.5 GiB may cause uploads to fail.
     pub multipart_chunk_size: u64,
 
     #[arg(

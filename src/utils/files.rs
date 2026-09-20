@@ -37,10 +37,9 @@ pub fn read_dir_recursive(path: impl AsRef<Path>) -> impl Stream<Item = io::Resu
             while let Some(entry) = entries.next_entry().await? {
                 let entry = FileEntry::from_path(entry.path()).await?;
 
-                // Symlinks are not followed
                 if entry.metadata.file_type().is_dir() {
                     directories.push(entry.path);
-                } else {
+                } else if !entry.metadata.is_symlink() {
                     yield Ok(entry);
                 }
             }
