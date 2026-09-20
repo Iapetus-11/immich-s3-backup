@@ -31,17 +31,24 @@ fn _pack_zip(files: Vec<FileEntry>, output_zip_path: &Path, compress: bool) -> R
 
     let mut zip_writer = ZipWriter::new(&mut output_file);
 
-    let mut last_result = Ok(());
     for file in &files {
-        last_result = write_file_to_zip(file, &mut zip_writer, zip_options);
+        let result = write_file_to_zip(file, &mut zip_writer, zip_options)
+            .with_context(|| format!("Failed to write {file} to zip"));
 
-        if last_result.is_err() {
-            let _ = remove_file(output_zip_path);
-            break;
+        if result.is_err() {
+            let cleanup_result = remove_file(output_zip_path);
+            if let Err(cleanup_error) = cleanup_result {
+                error!("Failed to cleanup {output_zip_path:?}");
+            }
+            return result;
         }
     }
 
-    last_result.with_context(|| format!("Zipping {} files into {output_zip_path:?}", files.len()))
+    zip_writer
+        .finish()
+        .with_context(|| format!("Failed to finalize {output_zip_path:?}"))?;
+
+    Ok(())
 }
 
 fn get_file_options(compress: bool) -> SimpleFileOptions {
@@ -50,7 +57,7 @@ fn get_file_options(compress: bool) -> SimpleFileOptions {
     if compress {
         options = options
             .compression_method(zip::CompressionMethod::Deflated)
-            .compression_level(Some(9));
+            .compression_level(Some(6));
     } else {
         options = options.compression_method(zip::CompressionMethod::Stored);
     }

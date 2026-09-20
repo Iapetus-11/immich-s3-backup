@@ -221,7 +221,9 @@ async fn backup_immich_folder(
             .await
             .with_context(|| format!("Packing batch {batch_idx} zip"))?;
 
-            let zip_output_file = FileEntry::from_path(zip_output_path).await.with_context(|| format!("Failed to get file entry for {zip_output_name}"))?;
+            let zip_output_file = FileEntry::from_path(zip_output_path)
+                .await
+                .with_context(|| format!("Failed to get file entry for {zip_output_name}"))?;
 
             yield upload_batch_zip(
                 s3_uploader.clone(),
