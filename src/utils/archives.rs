@@ -1,8 +1,7 @@
 use std::{
-    collections::HashSet,
     fs::{File, remove_file},
-    io::{self, Read, Write},
-    path::{Path, PathBuf},
+    io::{self},
+    path::Path,
 };
 
 use anyhow::{Context, Result};
@@ -38,7 +37,7 @@ fn _pack_zip(files: Vec<FileEntry>, output_zip_path: &Path, compress: bool) -> R
         if result.is_err() {
             let cleanup_result = remove_file(output_zip_path);
             if let Err(cleanup_error) = cleanup_result {
-                error!("Failed to cleanup {output_zip_path:?}");
+                error!("Failed to cleanup {output_zip_path:?}: {cleanup_error:?}");
             }
             return result;
         }

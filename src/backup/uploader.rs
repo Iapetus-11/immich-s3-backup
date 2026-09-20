@@ -1,6 +1,4 @@
-use std::path::Path;
-
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use aws_sdk_s3::primitives::{ByteStream, Length};
 use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
 use tracing::info;
@@ -93,7 +91,7 @@ impl S3Uploader {
             .set_parts(Some(parts))
             .build();
 
-        let complete_response = self
+        let _complete_response = self
             .s3_client
             .complete_multipart_upload()
             .bucket(&self.bucket_name)
