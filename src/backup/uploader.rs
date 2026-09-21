@@ -1,6 +1,7 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use aws_sdk_s3::primitives::{ByteStream, Length};
 use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
+use futures_util::{StreamExt, TryStreamExt, pin_mut, stream};
 use tracing::{error, info};
 
 use crate::config::CONFIG;
@@ -46,57 +47,20 @@ impl S3Uploader {
             .send()
             .await
             .context("Starting multipart upload")?;
-        let upload_id = create_response.upload_id().unwrap_or_default().to_string();
+        let upload_id = create_response.upload_id().unwrap_or_default();
 
-        let part_count = file.metadata.len().div_ceil(CONFIG.multipart_chunk_size);
-
-        let mut parts: Vec<CompletedPart> = Vec::with_capacity(part_count as usize);
-
-        let upload_result: Result<()> = async {
-            for part_idx in 1..=part_count {
-                let byte_stream_length = if part_idx == part_count {
-                    Length::UpTo(CONFIG.multipart_chunk_size)
-                } else {
-                    Length::Exact(CONFIG.multipart_chunk_size)
-                };
-
-                let byte_stream = ByteStream::read_from()
-                    .path(&file.path)
-                    .offset((part_idx - 1) * CONFIG.multipart_chunk_size)
-                    .length(byte_stream_length)
-                    .build()
-                    .await
-                    .with_context(|| format!("Creating ByteStream from file {file}"))?;
-
-                let upload_response = self
-                    .s3_client
-                    .upload_part()
-                    .bucket(&self.bucket_name)
-                    .key(key)
-                    .upload_id(&upload_id)
-                    .part_number(part_idx as i32)
-                    .body(byte_stream)
-                    .send()
-                    .await
-                    .with_context(|| format!("Uploading part {part_idx} from file {file}"))?;
-
-                parts.push(
-                    CompletedPart::builder()
-                        .e_tag(upload_response.e_tag().unwrap_or_default())
-                        .part_number(part_idx as i32)
-                        .build(),
-                );
-            }
+        let upload_result = async {
+            let upload_parts = self.upload_file_parts(file, key, upload_id).await?;
 
             let complete_input = CompletedMultipartUpload::builder()
-                .set_parts(Some(parts))
+                .set_parts(Some(upload_parts))
                 .build();
 
             self.s3_client
                 .complete_multipart_upload()
                 .bucket(&self.bucket_name)
                 .key(key)
-                .upload_id(&upload_id)
+                .upload_id(upload_id)
                 .multipart_upload(complete_input)
                 .send()
                 .await
@@ -124,5 +88,59 @@ impl S3Uploader {
         }
 
         upload_result
+    }
+
+    async fn upload_file_parts(
+        &self,
+        file: &FileEntry,
+        key: &str,
+        upload_id: &str,
+    ) -> Result<Vec<CompletedPart>> {
+        let part_count = file.metadata.len().div_ceil(CONFIG.multipart_chunk_size) as i32;
+        if part_count < 1 {
+            bail!("File {file} is empty");
+        }
+
+        let upload_part_futures = stream::iter(1..=part_count)
+            .map(|part_idx| self.upload_file_part(file, key, upload_id, part_idx))
+            .buffered(CONFIG.file_chunk_upload_concurrency);
+
+        upload_part_futures.try_collect().await
+    }
+
+    async fn upload_file_part(
+        &self,
+        file: &FileEntry,
+        key: &str,
+        upload_id: &str,
+        part_idx: i32,
+    ) -> Result<CompletedPart> {
+        let byte_stream_length =
+            Length::Exact(CONFIG.multipart_chunk_size.min(file.metadata.len()));
+
+        let byte_stream = ByteStream::read_from()
+            .path(&file.path)
+            .offset((part_idx as u64 - 1) * CONFIG.multipart_chunk_size)
+            .length(byte_stream_length)
+            .build()
+            .await
+            .with_context(|| format!("Creating ByteStream from file {file}"))?;
+
+        let upload_response = self
+            .s3_client
+            .upload_part()
+            .bucket(&self.bucket_name)
+            .key(key)
+            .upload_id(upload_id)
+            .part_number(part_idx)
+            .body(byte_stream)
+            .send()
+            .await
+            .with_context(|| format!("Uploading part {part_idx} from file {file}"))?;
+
+        Ok(CompletedPart::builder()
+            .e_tag(upload_response.e_tag().unwrap_or_default())
+            .part_number(part_idx)
+            .build())
     }
 }
