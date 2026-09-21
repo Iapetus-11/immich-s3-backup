@@ -4,16 +4,19 @@ use tracing::{error, info};
 use crate::{backup::history::BackupHistoryManager, utils::files::FileEntry};
 
 use std::{
+    collections::HashSet,
     env,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use anyhow::{Context, Result, bail};
 use chrono::Utc;
-use futures_util::{Stream, StreamExt, TryStreamExt, pin_mut};
+use futures_util::{Stream, StreamExt, pin_mut};
 use tokio::{
     fs::{self, File},
     process::Command,
+    sync::Mutex,
     task::JoinSet,
 };
 
@@ -177,15 +180,7 @@ async fn backup_all_immich_folders(
     info!("Zipping immich data...");
 
     for target_folder_name in FOLDERS_TO_BACKUP {
-        backup_immich_folder(
-            backup_output_folder,
-            &CONFIG.upload_location,
-            target_folder_name,
-            CONFIG.max_batch_size_bytes,
-            CONFIG.max_concurrent_uploads,
-            s3_uploader,
-        )
-        .await?;
+        backup_immich_folder(backup_output_folder, target_folder_name, s3_uploader).await?;
     }
 
     Ok(())
@@ -193,20 +188,17 @@ async fn backup_all_immich_folders(
 
 async fn backup_immich_folder(
     backup_output_folder: &Path,
-    upload_location: &Path,
     target_folder_name: &str,
-    max_batch_size_bytes: u64,
-    max_concurrent_uploads: usize,
     s3_uploader: &S3Uploader,
 ) -> Result<()> {
-    let target_folder_path = upload_location.to_path_buf().join(target_folder_name);
+    let target_folder_path = CONFIG.upload_location.join(target_folder_name);
 
     let batch_iterator =
-        iter_folder_batches(target_folder_path.clone(), max_batch_size_bytes).enumerate();
+        iter_folder_batches(target_folder_path.clone(), CONFIG.max_batch_size_bytes).enumerate();
     pin_mut!(batch_iterator);
 
-    let upload_tasks = JoinSet::<Result<()>>::new();
-    let mut zip_cleanup_path = Option::<PathBuf>::None;
+    let mut upload_tasks = JoinSet::<Result<()>>::new();
+    let zip_cleanup_paths = Arc::new(Mutex::new(HashSet::<PathBuf>::new()));
 
     let uploads_result: Result<()> = async {
         while let Some((batch_idx, batch_files_result)) = batch_iterator.next().await {
@@ -223,39 +215,69 @@ async fn backup_immich_folder(
             )
             .await
             .with_context(|| format!("Packing batch {batch_idx} zip"))?;
-            zip_cleanup_path = Some(zip_output_path.clone());
 
-            let zip_output_file = FileEntry::from_path(zip_output_path.clone())
+            {
+                let mut zip_cleanup_paths = zip_cleanup_paths.lock().await;
+                zip_cleanup_paths.insert(zip_output_path.clone());
+            }
+
+            let zip_output_file = FileEntry::from_path(zip_output_path)
                 .await
                 .with_context(|| format!("Failed to get file entry for {zip_output_name}"))?;
 
-            s3_uploader
-                .upload_file(
-                    &zip_output_file,
-                    &format!("{target_folder_name}/{zip_output_name}"),
-                    Some("application/zip".to_string()),
-                )
-                .await
-                .with_context(|| format!("Upload batch {batch_idx}"))?;
+            if upload_tasks.len() >= CONFIG.file_upload_concurrency
+                && let Some(next_upload_result) = upload_tasks.join_next().await
+            {
+                next_upload_result.context("Waiting on next upload result")??;
+            }
 
-            zip_cleanup_path = None;
-            fs::remove_file(&zip_output_file.path)
-                .await
-                .with_context(|| {
-                    format!("Failed to delete uploaded batch zip {zip_output_path:?}")
-                })?;
+            {
+                let s3_uploader = s3_uploader.clone();
+                let target_folder_name = target_folder_name.to_string();
+                let zip_cleanup_paths = zip_cleanup_paths.clone();
+                upload_tasks.spawn(async move {
+                    s3_uploader
+                        .upload_file(
+                            &zip_output_file,
+                            &format!("{target_folder_name}/{zip_output_name}"),
+                            Some("application/zip".to_string()),
+                        )
+                        .await
+                        .with_context(|| format!("Upload batch {batch_idx}"))?;
+
+                    fs::remove_file(&zip_output_file.path)
+                        .await
+                        .with_context(|| {
+                            format!("Failed to delete uploaded batch zip {zip_output_file}")
+                        })?;
+
+                    {
+                        let mut zip_cleanup_paths = zip_cleanup_paths.lock().await;
+                        zip_cleanup_paths.remove(&zip_output_file.path);
+                    }
+
+                    Ok(())
+                });
+            }
+        }
+
+        while let Some(next_upload_result) = upload_tasks.join_next().await {
+            next_upload_result.context("Waiting on next upload result")??;
         }
 
         Ok(())
     }
     .await;
 
-    if uploads_result.is_err()
-        && let Some(zip_cleanup_path) = zip_cleanup_path
-    {
-        let cleanup_result = remove_file_if_exists(&zip_cleanup_path).await;
-        if let Err(cleanup_error) = cleanup_result {
-            error!("Failed to cleanup zip: {cleanup_error:?}")
+    if uploads_result.is_err() {
+        upload_tasks.shutdown().await;
+
+        let zip_cleanup_paths = zip_cleanup_paths.lock().await;
+        for zip_cleanup_path in zip_cleanup_paths.iter() {
+            let cleanup_result = remove_file_if_exists(zip_cleanup_path).await;
+            if let Err(cleanup_error) = cleanup_result {
+                error!("Failed to cleanup zip: {cleanup_error:?}")
+            }
         }
     }
 

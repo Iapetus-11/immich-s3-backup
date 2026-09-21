@@ -92,8 +92,7 @@ impl S3Uploader {
                 .set_parts(Some(parts))
                 .build();
 
-            self
-                .s3_client
+            self.s3_client
                 .complete_multipart_upload()
                 .bucket(&self.bucket_name)
                 .key(key)

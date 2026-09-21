@@ -73,11 +73,23 @@ pub struct Config {
 
     #[arg(
         long,
-        env = "BACKUP_CONCURRENT_FILE_UPLOADS",
-        default_value = "3",
+        env = "BACKUP_FILE_UPLOAD_CONCURRENCY",
+        default_value = "1",
         value_parser = value_parser!(u64).range(1..)
     )]
-    pub max_concurrent_uploads: usize,
+    /// Increasing this number increases the free space required, because more batch zips will be
+    /// stored on disk for upload.
+    pub file_upload_concurrency: usize,
+
+    #[arg(
+        long,
+        env = "BACKUP_FILE_CHUNK_UPLOAD_CONCURRENCY",
+        default_value = "1",
+        value_parser = value_parser!(u64).range(1..)
+    )]
+    /// This value can be multiplied by $BACKUP_FILE_UPLOAD_CONCURRENCY to determine the maximum
+    /// amount of concurrent uploads.
+    pub file_chunk_upload_concurrency: usize,
 
     #[arg(
         long,
