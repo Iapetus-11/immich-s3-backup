@@ -27,19 +27,11 @@ use crate::{
 };
 
 pub async fn run() -> Result<()> {
-    let mut history = match BackupHistoryManager::new() {
-        Ok(history) => history,
-        Err(error) => {
-            return Err(error.context("Failed to create history manager"));
-        }
-    };
+    let mut history = BackupHistoryManager::new().context("Failed to create history manager")?;
 
-    let history_entry_id = match history.start_entry() {
-        Ok(history_entry_id) => history_entry_id,
-        Err(error) => {
-            return Err(error.context("Failed to start history entry"));
-        }
-    };
+    let history_entry_id = history
+        .start_entry()
+        .context("Failed to start history entry")?;
 
     let result = backup_database_and_folders().await;
     if let Err(error) = result {
@@ -75,13 +67,24 @@ async fn backup_database_and_folders() -> Result<()> {
         backup_name.clone(),
     );
 
-    dump_and_backup_immich_db(&backup_folder, &s3_uploader)
-        .await
-        .context("Backing up immich DB")?;
+    let backup_result: Result<()> = async {
+        dump_and_backup_immich_db(&backup_folder, &s3_uploader)
+            .await
+            .context("Backing up immich DB")?;
 
-    backup_all_immich_folders(&backup_folder, &s3_uploader)
-        .await
-        .context("Backing up immich folders")?;
+        backup_all_immich_folders(&backup_folder, &s3_uploader)
+            .await
+            .context("Backing up immich folders")?;
+
+        Ok(())
+    }
+    .await;
+
+    if let Err(error) = fs::remove_dir_all(&backup_folder).await {
+        error!("Failed to remove backup folder {backup_folder:?}: {error:?}");
+    }
+
+    backup_result?;
 
     info!("Done!");
 
@@ -141,13 +144,17 @@ async fn dump_and_backup_immich_db(backup_folder: &Path, s3_uploader: &S3Uploade
             .await
             .context("Getting file entry for database dump file")?;
 
-        pack_zip(vec![dump_file_entry.clone()], &dump_file_zip_path, true)
+        pack_zip(vec![dump_file_entry], &dump_file_zip_path, true)
             .await
             .context("Zipping database dump")?;
 
+        let dump_file_zip_entry = FileEntry::from_path(dump_file_zip_path.clone())
+            .await
+            .context("Getting file entry for database dump zip")?;
+
         s3_uploader
             .upload_file(
-                &dump_file_entry,
+                &dump_file_zip_entry,
                 &dump_file_zip_name,
                 Some("application/zip".to_string()),
             )

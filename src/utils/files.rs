@@ -35,11 +35,16 @@ pub fn read_dir_recursive(path: impl AsRef<Path>) -> impl Stream<Item = io::Resu
             let mut entries = fs::read_dir(directory).await?;
 
             while let Some(entry) = entries.next_entry().await? {
+                let entry_type = entry.file_type().await?;
+                if entry_type.is_symlink() {
+                    continue;
+                }
+
                 let entry = FileEntry::from_path(entry.path()).await?;
 
                 if entry.metadata.file_type().is_dir() {
                     directories.push(entry.path);
-                } else if !entry.metadata.is_symlink() {
+                } else {
                     yield Ok(entry);
                 }
             }

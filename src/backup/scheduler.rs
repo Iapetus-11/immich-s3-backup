@@ -4,7 +4,7 @@ use anyhow::Result;
 use anyhow::{Context, bail};
 use chrono::Utc;
 use tokio::time::{self};
-use tracing::error;
+use tracing::{error, info};
 
 use crate::backup::runner;
 use crate::{backup::history::BackupHistoryManager, config::CONFIG};
@@ -16,7 +16,7 @@ impl BackupScheduler {
         let mut history = BackupHistoryManager::new().context("Opening backup history manager")?;
 
         let last_backup_at = history
-            .get_last_entry()
+            .get_last_successful_entry()
             .context("Getting last entry")?
             .map(|e| e.started_at);
 
@@ -45,6 +45,10 @@ impl BackupScheduler {
                 Ok(duration) => duration,
                 Err(error) => {
                     error!("Failed to get duration until next backup: {error:?}");
+
+                    info!("Retrying in 5 seconds...");
+                    time::sleep(Duration::from_secs(5)).await;
+
                     continue;
                 }
             };

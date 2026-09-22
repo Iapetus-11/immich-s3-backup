@@ -73,8 +73,15 @@ fn write_file_to_zip<ZW: io::Write + io::Seek>(
 ) -> Result<()> {
     options = options.large_file(file_entry.metadata.len() >= ZIP64_BYTES_THR);
 
+    let relative_entry_path = file_entry
+        .path
+        .strip_prefix(&CONFIG.upload_location)
+        .ok()
+        .or_else(|| file_entry.path.file_name().map(Path::new))
+        .with_context(|| format!("Determining zip entry path for {file_entry}"))?;
+
     zip_writer
-        .start_file_from_path(&file_entry.path, options)
+        .start_file_from_path(relative_entry_path, options)
         .with_context(|| format!("Starting file {file_entry}"))?;
 
     let mut file = File::open(&file_entry.path).with_context(|| format!("Opening {file_entry}"))?;

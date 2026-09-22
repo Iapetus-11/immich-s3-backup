@@ -8,8 +8,6 @@ use crate::config::CONFIG;
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq, Debug)]
 pub struct BackupId(i64);
 
-// TODO: How to persist the backup-history.sqlite file in Docker?
-
 #[derive(Deserialize, Serialize)]
 pub struct BackupEntry {
     pub id: BackupId,
@@ -61,10 +59,10 @@ impl BackupHistoryManager {
         Ok(())
     }
 
-    pub fn get_last_entry(&mut self) -> Result<Option<BackupEntry>> {
+    pub fn get_last_successful_entry(&mut self) -> Result<Option<BackupEntry>> {
         let mut stmt = self
             .db
-            .prepare(include_str!("../sql/get_last_history_entry.sql"))?;
+            .prepare(include_str!("../sql/get_last_successful_history_entry.sql"))?;
 
         let last_entry = stmt
             .query_map((), |row| {

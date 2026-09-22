@@ -12,7 +12,7 @@ pub fn initialize_s3_client() -> aws_sdk_s3::Client {
         .max_backoff(Duration::from_secs(CONFIG.max_upload_retry_backoff))
         .build();
 
-    let aws_sdk_config = aws_config::SdkConfig::builder()
+    let mut aws_sdk_config_builder = aws_config::SdkConfig::builder()
         .behavior_version(BehaviorVersion::latest())
         .credentials_provider(SharedCredentialsProvider::new(Credentials::new(
             CONFIG.aws_access_key_id.clone(),
@@ -22,8 +22,9 @@ pub fn initialize_s3_client() -> aws_sdk_s3::Client {
             "Clap",
         )))
         .region(Some(Region::from_static(&CONFIG.aws_region)))
-        .retry_config(retry_config)
-        .build();
+        .retry_config(retry_config);
+    aws_sdk_config_builder.set_endpoint_url(CONFIG.aws_endpoint_url.clone());
+    let aws_sdk_config = aws_sdk_config_builder.build();
 
     aws_sdk_s3::Client::new(&aws_sdk_config)
 }

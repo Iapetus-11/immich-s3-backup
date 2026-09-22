@@ -21,7 +21,7 @@ jobs:
         run: cargo test
 
       - name: Run Clippy
-        run: cargo clippy --all-targets --all-features --allow-dirty
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Check formatting
         uses: actions-rust-lang/rustfmt@v1

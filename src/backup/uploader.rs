@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, bail};
 use aws_sdk_s3::primitives::{ByteStream, Length};
 use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
-use futures_util::{StreamExt, TryStreamExt, pin_mut, stream};
+use futures_util::{StreamExt, TryStreamExt, stream};
 use tracing::{error, info};
 
 use crate::config::CONFIG;
@@ -50,7 +50,9 @@ impl S3Uploader {
         let upload_id = create_response.upload_id().unwrap_or_default();
 
         let upload_result = async {
-            let upload_parts = self.upload_file_parts(file, key, upload_id).await?;
+            let upload_parts = self
+                .upload_file_multipart_parts(file, key, upload_id)
+                .await?;
 
             let complete_input = CompletedMultipartUpload::builder()
                 .set_parts(Some(upload_parts))
@@ -90,7 +92,7 @@ impl S3Uploader {
         upload_result
     }
 
-    async fn upload_file_parts(
+    async fn upload_file_multipart_parts(
         &self,
         file: &FileEntry,
         key: &str,
@@ -102,25 +104,26 @@ impl S3Uploader {
         }
 
         let upload_part_futures = stream::iter(1..=part_count)
-            .map(|part_idx| self.upload_file_part(file, key, upload_id, part_idx))
+            .map(|part_idx| self.upload_file_multipart_part(file, key, upload_id, part_idx))
             .buffered(CONFIG.file_chunk_upload_concurrency);
 
         upload_part_futures.try_collect().await
     }
 
-    async fn upload_file_part(
+    async fn upload_file_multipart_part(
         &self,
         file: &FileEntry,
         key: &str,
         upload_id: &str,
         part_idx: i32,
     ) -> Result<CompletedPart> {
-        let byte_stream_length =
-            Length::Exact(CONFIG.multipart_chunk_size.min(file.metadata.len()));
+        let offset = (part_idx as u64 - 1) * CONFIG.multipart_chunk_size;
+        let remaining_bytes = file.metadata.len().saturating_sub(offset);
+        let byte_stream_length = Length::Exact(CONFIG.multipart_chunk_size.min(remaining_bytes));
 
         let byte_stream = ByteStream::read_from()
             .path(&file.path)
-            .offset((part_idx as u64 - 1) * CONFIG.multipart_chunk_size)
+            .offset(offset)
             .length(byte_stream_length)
             .build()
             .await
