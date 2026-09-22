@@ -1,7 +1,10 @@
 use async_stream::try_stream;
 use tracing::{error, info};
 
-use crate::{backup::history::BackupHistoryManager, utils::files::FileEntry};
+use crate::{
+    backup::history::BackupHistoryManager,
+    utils::{files::FileEntry, postgres::run_pg_dumpall},
+};
 
 use std::{
     collections::HashSet,
@@ -10,12 +13,11 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use chrono::Utc;
 use futures_util::{Stream, StreamExt, pin_mut};
 use tokio::{
     fs::{self, File},
-    process::Command,
     sync::Mutex,
     task::JoinSet,
 };
@@ -101,31 +103,7 @@ async fn dump_and_backup_immich_db(backup_folder: &Path, s3_uploader: &S3Uploade
         .await
         .with_context(|| format!("Creating {DB_BACKUP_FILENAME}"))?;
 
-    let pg_dumpall_result = Command::new("pg_dumpall")
-        .arg("--clean")
-        .arg("--if-exists")
-        .arg(format!("--host={}", CONFIG.db_host)) // TODO: Parse & support port numbers
-        .arg(format!("--username={}", CONFIG.db_username))
-        .env("PGPASSWORD", &CONFIG.db_password)
-        .stdout(dump_file.into_std().await)
-        .status()
-        .await
-        .with_context(|| "Running pg_dumpall".to_string());
-
-    let pg_dumpall_result = match pg_dumpall_result {
-        Ok(pg_dumpall_output) => {
-            if !pg_dumpall_output.success() {
-                let error_code = pg_dumpall_output
-                    .code()
-                    .map(|code| code.to_string())
-                    .unwrap_or_else(|| "unknown".to_string());
-                bail!("Error exit code from pg_dumpall: {error_code}")
-            } else {
-                Ok(())
-            }
-        }
-        Err(error) => Err(error),
-    };
+    let pg_dumpall_result = run_pg_dumpall(dump_file).await;
 
     if let Err(pg_dumpall_error) = pg_dumpall_result {
         let rm_dump_file_result = remove_file_if_exists(&dump_file_path).await;

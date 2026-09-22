@@ -1,20 +1,11 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use rusqlite::Connection;
-use serde::{Deserialize, Serialize};
 
 use crate::config::CONFIG;
 
-#[derive(Clone, Deserialize, Serialize, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct BackupId(i64);
-
-#[derive(Deserialize, Serialize)]
-pub struct BackupEntry {
-    pub id: BackupId,
-    pub started_at: DateTime<Utc>,
-    pub ended_at: Option<DateTime<Utc>>,
-    pub failed: bool,
-}
 
 pub struct BackupHistoryManager {
     db: Connection,
@@ -59,21 +50,12 @@ impl BackupHistoryManager {
         Ok(())
     }
 
-    pub fn get_last_successful_entry(&mut self) -> Result<Option<BackupEntry>> {
+    pub fn get_last_successful_entry(&mut self) -> Result<Option<DateTime<Utc>>> {
         let mut stmt = self
             .db
             .prepare(include_str!("../sql/get_last_successful_history_entry.sql"))?;
 
-        let last_entry = stmt
-            .query_map((), |row| {
-                Ok(BackupEntry {
-                    id: BackupId(row.get(0)?),
-                    started_at: row.get(1)?,
-                    ended_at: row.get(2)?,
-                    failed: row.get(3)?,
-                })
-            })?
-            .next();
+        let last_entry = stmt.query_map((), |row| row.get(0))?.next();
 
         let Some(last_entry) = last_entry else {
             return Ok(None);

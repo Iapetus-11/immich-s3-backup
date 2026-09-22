@@ -17,8 +17,7 @@ impl BackupScheduler {
 
         let last_backup_at = history
             .get_last_successful_entry()
-            .context("Getting last entry")?
-            .map(|e| e.started_at);
+            .context("Getting last entry")?;
 
         let Some(last_backup_at) = last_backup_at else {
             return Ok(Duration::ZERO);

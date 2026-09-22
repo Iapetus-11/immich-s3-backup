@@ -10,14 +10,33 @@ pub struct Config {
     pub forever: bool,
 
     // Immich ------------------------------------------------------------------
-    #[arg(long, env = "DB_HOST")]
-    pub db_host: String,
+    // TODO: Support Immich's `_FILE` secret variants (e.g. DB_PASSWORD_FILE, DB_URL_FILE).
+    /// Overrides the individual DB_* connection values when set.
+    #[arg(long, env = "DB_URL", hide_env_values = true)]
+    pub db_url: Option<String>,
 
-    #[arg(long, env = "DB_USERNAME")]
+    #[arg(long, env = "DB_HOSTNAME", default_value = "database")]
+    pub db_hostname: String,
+
+    #[arg(long, env = "DB_PORT", default_value = "5432")]
+    pub db_port: u16,
+
+    #[arg(long, env = "DB_USERNAME", default_value = "postgres")]
     pub db_username: String,
 
-    #[arg(long, env = "DB_PASSWORD", hide_env_values = true)]
-    pub db_password: String,
+    #[arg(
+        long,
+        env = "DB_PASSWORD",
+        hide_env_values = true,
+        required_unless_present = "db_url"
+    )]
+    pub db_password: Option<String>,
+
+    #[arg(long, env = "DB_DATABASE_NAME", default_value = "immich")]
+    pub db_database_name: String,
+
+    #[arg(long, env = "DB_SSL_MODE")]
+    pub db_ssl_mode: Option<String>,
 
     #[arg(long, env = "UPLOAD_LOCATION")]
     pub upload_location: PathBuf,
