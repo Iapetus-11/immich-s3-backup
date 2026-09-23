@@ -4,8 +4,14 @@ use tracing::{Level, error};
 
 use crate::config::{CONFIG, force_load_config};
 
-mod backup;
+mod archives;
+mod aws_s3;
 mod config;
+mod history;
+mod postgres;
+mod runner;
+mod scheduler;
+mod uploader;
 mod utils;
 
 #[tokio::main]
@@ -21,9 +27,9 @@ async fn main() {
     .unwrap();
 
     if CONFIG.forever {
-        backup::Scheduler.run_forever().await;
+        scheduler::BackupScheduler.run_forever().await;
     } else {
-        if let Err(error) = backup::run().await {
+        if let Err(error) = runner::run().await {
             error!("{error:?}");
             process::exit(1);
         }

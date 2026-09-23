@@ -1,4 +1,1 @@
-pub mod archives;
-pub mod aws_s3;
-pub mod files;
-pub mod postgres;
+pub mod dir_reader;

@@ -6,8 +6,8 @@ use chrono::Utc;
 use tokio::time::{self};
 use tracing::{error, info};
 
-use crate::backup::runner;
-use crate::{backup::history::BackupHistoryManager, config::CONFIG};
+use crate::runner;
+use crate::{config::CONFIG, history::BackupHistoryManager};
 
 pub struct BackupScheduler;
 

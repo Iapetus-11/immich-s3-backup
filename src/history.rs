@@ -23,7 +23,7 @@ impl BackupHistoryManager {
 
     fn ensure_table(&mut self) -> Result<()> {
         self.db
-            .execute(include_str!("../sql/create_history_table.sql"), ())
+            .execute(include_str!("sql/create_history_table.sql"), ())
             .context("Creating history table")?;
         Ok(())
     }
@@ -33,7 +33,7 @@ impl BackupHistoryManager {
         let id = BackupId(now.timestamp_millis());
 
         self.db
-            .execute(include_str!("../sql/start_history_entry.sql"), (id.0, now))
+            .execute(include_str!("sql/start_history_entry.sql"), (id.0, now))
             .context("Creating history record")?;
 
         Ok(id)
@@ -43,7 +43,7 @@ impl BackupHistoryManager {
         let now = Utc::now();
         self.db
             .execute(
-                include_str!("../sql/finish_history_entry.sql"),
+                include_str!("sql/finish_history_entry.sql"),
                 (id.0, failed, now),
             )
             .context("Updating history record")?;
@@ -53,7 +53,7 @@ impl BackupHistoryManager {
     pub fn get_last_successful_entry(&mut self) -> Result<Option<DateTime<Utc>>> {
         let mut stmt = self
             .db
-            .prepare(include_str!("../sql/get_last_successful_history_entry.sql"))?;
+            .prepare(include_str!("sql/get_last_successful_history_entry.sql"))?;
 
         let last_entry = stmt.query_map((), |row| row.get(0))?.next();
 

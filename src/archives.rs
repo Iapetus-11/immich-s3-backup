@@ -12,7 +12,7 @@ use tracing::error;
 
 use crate::config::CONFIG;
 
-use super::files::FileEntry;
+use crate::utils::dir_reader::FileEntry;
 
 pub async fn pack_zip(files: Vec<FileEntry>, output_zip_path: &Path, compress: bool) -> Result<()> {
     let output_zip_path_clone = output_zip_path.to_path_buf();

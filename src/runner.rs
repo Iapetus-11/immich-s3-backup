@@ -2,8 +2,7 @@ use async_stream::try_stream;
 use tracing::{error, info};
 
 use crate::{
-    backup::history::BackupHistoryManager,
-    utils::{files::FileEntry, postgres::run_pg_dumpall},
+    history::BackupHistoryManager, postgres::run_pg_dumpall, utils::dir_reader::FileEntry,
 };
 
 use std::{
@@ -23,9 +22,8 @@ use tokio::{
 };
 
 use crate::{
-    backup::uploader::S3Uploader,
-    config::CONFIG,
-    utils::{archives::pack_zip, aws_s3::initialize_s3_client, files::read_dir_recursive},
+    archives::pack_zip, aws_s3::initialize_s3_client, config::CONFIG, uploader::S3Uploader,
+    utils::dir_reader::read_dir_recursive,
 };
 
 pub async fn run() -> Result<()> {

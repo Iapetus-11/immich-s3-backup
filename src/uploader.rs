@@ -5,7 +5,7 @@ use futures_util::{StreamExt, TryStreamExt, stream};
 use tracing::{error, info};
 
 use crate::config::CONFIG;
-use crate::utils::files::FileEntry;
+use crate::utils::dir_reader::FileEntry;
 
 #[derive(Clone)]
 pub struct S3Uploader {
