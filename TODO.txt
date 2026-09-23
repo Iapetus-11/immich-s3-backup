@@ -1,6 +1,3 @@
-- Recurring backup functionality
 - Delete old backups automatically
 - Restore from backup functionality
-- Upload progress reporting instead of log dump
-- Encrypt/password-protect zips
 - GH action for making releases & container registery publishes automatically?
