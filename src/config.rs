@@ -79,7 +79,7 @@ pub struct Config {
     #[arg(
         long,
         env = "BACKUP_BATCH_SIZE_BYTES",
-        default_value = "5368709120", // 5 GiB
+        default_value = "10737418240", // 10 GiB
         value_parser = value_parser!(u64).range(5 * 1024 * 1024..)
     )]
     pub max_batch_size_bytes: u64,
@@ -100,7 +100,7 @@ pub struct Config {
         value_parser = value_parser!(u64).range(1..)
     )]
     /// Increasing this number increases the free space required, because more batch zips will be
-    /// stored on disk for upload.
+    /// stored on disk for upload, so you may want to decrease $BACKUP_BATCH_SIZE_BYTES.
     pub file_upload_concurrency: usize,
 
     #[arg(

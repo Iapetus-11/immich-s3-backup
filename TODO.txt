@@ -1,3 +1,0 @@
-- Delete old backups automatically
-- Restore from backup functionality
-- GH action for making releases & container registery publishes automatically?

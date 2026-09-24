@@ -4,12 +4,11 @@ use tracing::{Level, error};
 
 use crate::config::{CONFIG, force_load_config};
 
-mod archives;
-mod aws_s3;
 mod config;
 mod history;
 mod postgres;
 mod runner;
+mod s3_client;
 mod scheduler;
 mod utils;
 

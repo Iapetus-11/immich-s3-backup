@@ -52,7 +52,7 @@ impl S3Uploader {
             .send()
             .await
             .context("Starting multipart upload")?;
-        let upload_id = create_response.upload_id().unwrap_or_default();
+        let upload_id = create_response.upload_id().unwrap_or_default(); // This should always be present
 
         let upload_result = async {
             let upload_parts = self
@@ -147,7 +147,7 @@ impl S3Uploader {
             .with_context(|| format!("Uploading part {part_idx} from file {file}"))?;
 
         Ok(CompletedPart::builder()
-            .e_tag(upload_response.e_tag().unwrap_or_default())
+            .e_tag(upload_response.e_tag().unwrap_or_default()) // e-tag should always be present
             .part_number(part_idx)
             .build())
     }

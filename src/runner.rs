@@ -2,7 +2,9 @@ use async_stream::try_stream;
 use tracing::{error, info};
 
 use crate::{
-    history::BackupHistoryManager, postgres::run_pg_dumpall, utils::dir_reader::FileEntry,
+    history::BackupHistoryManager,
+    postgres::run_pg_dumpall,
+    utils::{archives::pack_zip, dir_reader::FileEntry},
 };
 
 use std::{
@@ -22,9 +24,8 @@ use tokio::{
 };
 
 use crate::{
-    archives::pack_zip,
-    aws_s3::initialize_s3_client,
     config::CONFIG,
+    s3_client::initialize_s3_client,
     utils::{dir_reader::read_dir_recursive, uploader::S3Uploader},
 };
 
@@ -124,9 +125,15 @@ async fn dump_and_backup_immich_db(backup_folder: &Path, s3_uploader: &S3Uploade
             .await
             .context("Getting file entry for database dump file")?;
 
-        pack_zip(vec![dump_file_entry], &dump_file_zip_path, true)
-            .await
-            .context("Zipping database dump")?;
+        pack_zip(
+            backup_folder.to_path_buf(),
+            vec![dump_file_entry],
+            &dump_file_zip_path,
+            true,
+            &CONFIG.zip_password,
+        )
+        .await
+        .context("Zipping database dump")?;
 
         let dump_file_zip_entry = FileEntry::from_path(dump_file_zip_path.clone())
             .await
@@ -315,9 +322,15 @@ async fn pack_batch_zip(
     let zip_output_name = format!("{target_folder_name}-{batch_idx}.zip");
     let zip_output_path = backup_output_folder.join(&zip_output_name);
 
-    let batch_zip_file_result = pack_zip(batch_files, &zip_output_path, false)
-        .await
-        .with_context(|| format!("Zipping {target_folder_path:?} (batch {batch_idx})"));
+    let batch_zip_file_result = pack_zip(
+        CONFIG.upload_location.clone(),
+        batch_files,
+        &zip_output_path,
+        false,
+        &CONFIG.zip_password,
+    )
+    .await
+    .with_context(|| format!("Zipping {target_folder_path:?} (batch {batch_idx})"));
 
     match batch_zip_file_result {
         Ok(_) => {
