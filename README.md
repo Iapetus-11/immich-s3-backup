@@ -38,7 +38,7 @@ And under top-level `volumes:`:
 ### 2. Append to Immich's `.env`
 
 ```dotenv
-# immich-cloudflare-backup ------------------------------------------------------
+# Immich Backup ########################################
 AWS_ENDPOINT_URL=https://<cloudflare-account-id>.r2.cloudflarestorage.com  # Omit to use AWS S3
 AWS_ACCESS_KEY_ID=
 AWS_SECRET_ACCESS_KEY=
