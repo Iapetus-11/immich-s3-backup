@@ -22,8 +22,10 @@ use tokio::{
 };
 
 use crate::{
-    archives::pack_zip, aws_s3::initialize_s3_client, config::CONFIG, uploader::S3Uploader,
-    utils::dir_reader::read_dir_recursive,
+    archives::pack_zip,
+    aws_s3::initialize_s3_client,
+    config::CONFIG,
+    utils::{dir_reader::read_dir_recursive, uploader::S3Uploader},
 };
 
 pub async fn run() -> Result<()> {
@@ -65,6 +67,8 @@ async fn backup_database_and_folders() -> Result<()> {
         s3_client,
         CONFIG.aws_bucket_name.clone(),
         backup_name.clone(),
+        CONFIG.multipart_chunk_size,
+        CONFIG.file_chunk_upload_concurrency,
     );
 
     let backup_result: Result<()> = async {

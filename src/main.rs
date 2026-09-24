@@ -11,7 +11,6 @@ mod history;
 mod postgres;
 mod runner;
 mod scheduler;
-mod uploader;
 mod utils;
 
 #[tokio::main]
