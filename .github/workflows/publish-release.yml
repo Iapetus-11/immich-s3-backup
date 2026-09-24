@@ -1,0 +1,89 @@
+name: Publish Release
+
+on:
+  push:
+    branches: [master]
+
+concurrency:
+  group: publish-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Prepare release
+        id: release
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          version="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')"
+          image_name="ghcr.io/${GITHUB_REPOSITORY,,}"
+
+          previous_version=""
+          if [[ -n "${BEFORE_SHA}" && ! "${BEFORE_SHA}" =~ ^0+$ ]] && git cat-file -e "${BEFORE_SHA}:Cargo.toml" 2>/dev/null; then
+            previous_version="$(git show "${BEFORE_SHA}:Cargo.toml" | python3 -c 'import sys, tomllib; print(tomllib.loads(sys.stdin.buffer.read().decode())["package"]["version"])')"
+          fi
+
+          publish=false
+          if [[ "${version}" != "${previous_version}" ]]; then
+            publish=true
+          fi
+
+          if gh release view "v${version}" >/dev/null 2>&1; then
+            echo "Release v${version} already exists; skipping."
+            publish=false
+          fi
+
+          echo "Version: ${version}"
+          echo "Previous version: ${previous_version:-<none>}"
+          echo "Publish: ${publish}"
+
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "image_name=${image_name}" >> "$GITHUB_OUTPUT"
+          echo "publish=${publish}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        if: steps.release.outputs.publish == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        if: steps.release.outputs.publish == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build and publish Docker image
+        if: steps.release.outputs.publish == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ steps.release.outputs.image_name }}:${{ steps.release.outputs.version }}
+            ${{ steps.release.outputs.image_name }}:latest
+
+      - name: Create GitHub release
+        if: steps.release.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          gh release create "v${VERSION}" \
+            --target "$GITHUB_SHA" \
+            --title "v${VERSION}" \
+            --generate-notes
