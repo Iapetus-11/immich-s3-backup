@@ -1,4 +1,4 @@
-# immich-cloudflare-backup
+# Immich S3 Backup
 
 Backs up an Immich instance (database dump + upload library) to Cloudflare R2 or any S3-compatible bucket, as password-protected zips.
 
