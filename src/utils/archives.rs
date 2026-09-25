@@ -1,5 +1,5 @@
 use std::{
-    fs::{File, remove_file},
+    fs::File,
     io::{self},
     path::{Path, PathBuf},
 };
@@ -8,46 +8,58 @@ use anyhow::{Context, Result};
 use tokio::task::spawn_blocking;
 use zip::{ZIP64_BYTES_THR, ZipWriter, write::SimpleFileOptions};
 
-use tracing::error;
-
 use crate::utils::dir_reader::FileEntry;
 
-pub struct PackZipArgs {
-    source_dir: PathBuf,
-    files: Vec<FileEntry>,
-    output_file: File,
-    compress: bool,
-    password: &'static str,
+pub struct PackZipArgs<F> {
+    pub source_dir: PathBuf,
+    pub file_entries: Vec<FileEntry>,
+    pub output_file: F,
+    pub compress: bool,
+    pub password: &'static str,
 }
 
-pub async fn pack_zip(args: PackZipArgs) -> Result<()> {
+pub async fn pack_zip(
+    PackZipArgs {
+        source_dir,
+        file_entries,
+        output_file,
+        compress,
+        password,
+    }: PackZipArgs<tokio::fs::File>,
+) -> Result<()> {
+    let args = PackZipArgs {
+        source_dir,
+        file_entries,
+        output_file: output_file.into_std().await,
+        compress,
+        password,
+    };
+
     spawn_blocking(move || _pack_zip(args))
         .await
-        .with_context(|| format!("Failed to pack zip file"))??;
+        .context("Failed to pack zip file")??;
     Ok(())
 }
 
 fn _pack_zip(
     PackZipArgs {
         source_dir,
-        files,
+        file_entries,
         mut output_file,
         compress,
         password,
-    }: PackZipArgs,
+    }: PackZipArgs<File>,
 ) -> Result<()> {
     let zip_options = get_file_options(compress, password);
 
     let mut zip_writer = ZipWriter::new(&mut output_file);
 
-    for file in &files {
-        let result = write_file_to_zip(&source_dir, file, &mut zip_writer, zip_options)
-            .with_context(|| format!("Failed to write {file} to zip"));
+    for file_entry in &file_entries {
+        write_file_to_zip(&source_dir, file_entry, &mut zip_writer, zip_options)
+            .with_context(|| format!("Failed to write {file_entry} to zip"))?;
     }
 
-    zip_writer
-        .finish()
-        .with_context(|| format!("Failed to finalize zip"))?;
+    zip_writer.finish().context("Failed to finalize zip")?;
 
     Ok(())
 }

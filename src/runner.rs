@@ -4,7 +4,10 @@ use tracing::{error, info};
 use crate::{
     history::BackupHistoryManager,
     postgres::run_pg_dumpall,
-    utils::{archives::pack_zip, dir_reader::FileEntry},
+    utils::{
+        archives::{PackZipArgs, pack_zip},
+        dir_reader::FileEntry,
+    },
 };
 
 use std::{
@@ -125,13 +128,17 @@ async fn dump_and_backup_immich_db(backup_folder: &Path, s3_uploader: &S3Uploade
             .await
             .context("Getting file entry for database dump file")?;
 
-        pack_zip(
-            backup_folder.to_path_buf(),
-            vec![dump_file_entry],
-            &dump_file_zip_path,
-            true,
-            &CONFIG.zip_password,
-        )
+        let output_file = File::create(&dump_file_zip_path)
+            .await
+            .with_context(|| format!("Creating zip output file {dump_file_zip_path:?}"))?;
+
+        pack_zip(PackZipArgs {
+            source_dir: backup_folder.to_path_buf(),
+            file_entries: vec![dump_file_entry],
+            output_file,
+            compress: true,
+            password: &CONFIG.zip_password,
+        })
         .await
         .context("Zipping database dump")?;
 
@@ -321,14 +328,17 @@ async fn pack_batch_zip(
 ) -> Result<(String, PathBuf)> {
     let zip_output_name = format!("{target_folder_name}-{batch_idx}.zip");
     let zip_output_path = backup_output_folder.join(&zip_output_name);
+    let zip_output_file = File::create(&zip_output_path)
+        .await
+        .with_context(|| format!("Creating zip output file {zip_output_path:?}"))?;
 
-    let batch_zip_file_result = pack_zip(
-        CONFIG.upload_location.clone(),
-        batch_files,
-        &zip_output_path,
-        false,
-        &CONFIG.zip_password,
-    )
+    let batch_zip_file_result = pack_zip(PackZipArgs {
+        source_dir: CONFIG.upload_location.clone(),
+        file_entries: batch_files,
+        output_file: zip_output_file,
+        compress: false,
+        password: &CONFIG.zip_password,
+    })
     .await
     .with_context(|| format!("Zipping {target_folder_path:?} (batch {batch_idx})"));
 
