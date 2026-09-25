@@ -120,36 +120,36 @@ async fn dump_and_backup_immich_db(backup_folder: &Path, s3_uploader: &S3Uploade
         return Err(pg_dumpall_error);
     }
 
-    let dump_file_zip_name = format!("{DB_BACKUP_FILENAME}.zip");
-    let dump_file_zip_path = dump_file_path.with_file_name(&dump_file_zip_name);
+    let dump_zip_name = format!("{DB_BACKUP_FILENAME}.zip");
+    let dump_zip_path = dump_file_path.with_file_name(&dump_zip_name);
 
     let pack_and_upload_result: Result<()> = async {
         let dump_file_entry = FileEntry::from_path(dump_file_path.clone())
             .await
             .context("Getting file entry for database dump file")?;
 
-        let output_file = File::create(&dump_file_zip_path)
+        let dump_zip_file = File::create(&dump_zip_path)
             .await
-            .with_context(|| format!("Creating zip output file {dump_file_zip_path:?}"))?;
+            .with_context(|| format!("Creating zip output file {dump_zip_path:?}"))?;
 
         pack_zip(PackZipArgs {
             source_dir: backup_folder.to_path_buf(),
             file_entries: vec![dump_file_entry],
-            output_file,
+            output_file: dump_zip_file,
             compress: true,
             password: &CONFIG.zip_password,
         })
         .await
         .context("Zipping database dump")?;
 
-        let dump_file_zip_entry = FileEntry::from_path(dump_file_zip_path.clone())
+        let dump_file_zip_entry = FileEntry::from_path(dump_zip_path.clone())
             .await
             .context("Getting file entry for database dump zip")?;
 
         s3_uploader
             .upload_file(
                 &dump_file_zip_entry,
-                &dump_file_zip_name,
+                &dump_zip_name,
                 Some("application/zip".to_string()),
             )
             .await
@@ -164,7 +164,7 @@ async fn dump_and_backup_immich_db(backup_folder: &Path, s3_uploader: &S3Uploade
         error!("Failed to clean up dump file: {rm_dump_file_error:?}");
     }
 
-    let rm_dump_zip_file_result = remove_file_if_exists(&dump_file_zip_path).await;
+    let rm_dump_zip_file_result = remove_file_if_exists(&dump_zip_path).await;
     if let Err(rm_dump_zip_file_error) = rm_dump_zip_file_result {
         error!("Failed to clean up dump zip file: {rm_dump_zip_file_error:?}");
     }
