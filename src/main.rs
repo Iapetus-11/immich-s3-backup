@@ -4,6 +4,7 @@ use tracing::{Level, error};
 
 use crate::config::{CONFIG, force_load_config};
 
+mod backup;
 mod config;
 mod history;
 mod postgres;
