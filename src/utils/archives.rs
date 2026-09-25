@@ -12,30 +12,30 @@ use tracing::error;
 
 use crate::utils::dir_reader::FileEntry;
 
-pub async fn pack_zip(
+pub struct PackZipArgs {
     source_dir: PathBuf,
     files: Vec<FileEntry>,
-    output_path: &Path,
+    output_file: File,
     compress: bool,
     password: &'static str,
-) -> Result<()> {
-    let output_path_clone = output_path.to_path_buf();
-    spawn_blocking(move || _pack_zip(source_dir, files, output_path_clone, compress, password))
+}
+
+pub async fn pack_zip(args: PackZipArgs) -> Result<()> {
+    spawn_blocking(move || _pack_zip(args))
         .await
-        .with_context(|| format!("Failed to pack zip file {output_path:?}"))??;
+        .with_context(|| format!("Failed to pack zip file"))??;
     Ok(())
 }
 
 fn _pack_zip(
-    source_dir: PathBuf,
-    files: Vec<FileEntry>,
-    output_zip_path: PathBuf,
-    compress: bool,
-    password: &'static str,
+    PackZipArgs {
+        source_dir,
+        files,
+        mut output_file,
+        compress,
+        password,
+    }: PackZipArgs,
 ) -> Result<()> {
-    let mut output_file = File::create(&output_zip_path)
-        .with_context(|| format!("Creating file at {output_zip_path:?}"))?;
-
     let zip_options = get_file_options(compress, password);
 
     let mut zip_writer = ZipWriter::new(&mut output_file);
@@ -43,19 +43,11 @@ fn _pack_zip(
     for file in &files {
         let result = write_file_to_zip(&source_dir, file, &mut zip_writer, zip_options)
             .with_context(|| format!("Failed to write {file} to zip"));
-
-        if result.is_err() {
-            let cleanup_result = remove_file(&output_zip_path);
-            if let Err(cleanup_error) = cleanup_result {
-                error!("Failed to cleanup {output_zip_path:?}: {cleanup_error:?}");
-            }
-            return result;
-        }
     }
 
     zip_writer
         .finish()
-        .with_context(|| format!("Failed to finalize {output_zip_path:?}"))?;
+        .with_context(|| format!("Failed to finalize zip"))?;
 
     Ok(())
 }
