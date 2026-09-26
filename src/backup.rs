@@ -183,17 +183,62 @@ async fn backup_immich_folder(
             let batch_files = batch_files_result
                 .with_context(|| format!("Getting batch {batch_idx} for {target_folder_path:?}"))?;
 
-            queue_folder_batch_backup(
-                &mut upload_tasks,
-                target_folder_name,
+            let zip_output_path = pack_batch_zip(
                 &target_folder_path,
                 batch_idx,
                 batch_files,
                 backup_output_folder,
-                abandoned_zip_files.clone(),
-                s3_uploader,
             )
-            .await?;
+            .await
+            .with_context(|| format!("Packing batch {batch_idx} zip"))?;
+
+            {
+                let mut zip_cleanup_paths = abandoned_zip_files.lock().await;
+                zip_cleanup_paths.insert(zip_output_path.clone());
+            }
+
+            let zip_output_file = FileEntry::from_path(zip_output_path)
+                .await
+                .with_context(|| format!("Failed to get file entry for batch {batch_idx} zip"))?;
+
+            if upload_tasks.len() >= CONFIG.file_upload_concurrency {
+                info!(
+                    "Waiting on previous upload to complete before uploading batch {batch_idx}..."
+                );
+
+                if let Some(next_upload_result) = upload_tasks.join_next().await {
+                    next_upload_result.context("Waiting on next upload result")??;
+                }
+            }
+
+            {
+                let s3_uploader = s3_uploader.clone();
+                let target_folder_name = target_folder_name.to_string();
+                let abandoned_zip_files = abandoned_zip_files.clone();
+                upload_tasks.spawn(async move {
+                    s3_uploader
+                        .upload_file(
+                            &zip_output_file,
+                            &format!("{target_folder_name}/{batch_idx}.zip"),
+                            Some("application/zip".to_string()),
+                        )
+                        .await
+                        .with_context(|| format!("Upload batch {batch_idx}"))?;
+
+                    fs::remove_file(&zip_output_file.path)
+                        .await
+                        .with_context(|| {
+                            format!("Deleting uploaded batch zip {zip_output_file}")
+                        })?;
+
+                    {
+                        let mut zip_cleanup_paths = abandoned_zip_files.lock().await;
+                        zip_cleanup_paths.remove(&zip_output_file.path);
+                    }
+
+                    Ok(())
+                });
+            }
         }
 
         while let Some(next_upload_result) = upload_tasks.join_next().await {
@@ -217,72 +262,6 @@ async fn backup_immich_folder(
     }
 
     uploads_result
-}
-
-async fn queue_folder_batch_backup(
-    upload_tasks: &mut JoinSet<Result<()>>,
-    target_folder_name: &str,
-    target_folder_path: &Path,
-    batch_idx: usize,
-    batch_files: Vec<FileEntry>,
-    backup_output_folder: &Path,
-    abandoned_zip_files: Arc<Mutex<HashSet<PathBuf>>>,
-    s3_uploader: &S3Uploader,
-) -> Result<()> {
-    let zip_output_path = pack_batch_zip(
-        &target_folder_path,
-        batch_idx,
-        batch_files,
-        backup_output_folder,
-    )
-    .await
-    .with_context(|| format!("Packing batch {batch_idx} zip"))?;
-
-    {
-        let mut abandoned_zip_files = abandoned_zip_files.lock().await;
-        abandoned_zip_files.insert(zip_output_path.clone());
-    }
-
-    let zip_output_file = FileEntry::from_path(zip_output_path)
-        .await
-        .with_context(|| format!("Failed to get file entry for batch {batch_idx} zip"))?;
-
-    if upload_tasks.len() >= CONFIG.file_upload_concurrency {
-        info!("Waiting on previous upload to complete before uploading batch {batch_idx}...");
-
-        if let Some(next_upload_result) = upload_tasks.join_next().await {
-            next_upload_result.context("Waiting on next upload result")??;
-        }
-    }
-
-    {
-        let s3_uploader = s3_uploader.clone();
-        let target_folder_name = target_folder_name.to_string();
-        let abandoned_zip_files = abandoned_zip_files.clone();
-        upload_tasks.spawn(async move {
-            s3_uploader
-                .upload_file(
-                    &zip_output_file,
-                    &format!("{target_folder_name}/{batch_idx}.zip"),
-                    Some("application/zip".to_string()),
-                )
-                .await
-                .with_context(|| format!("Upload batch {batch_idx}"))?;
-
-            fs::remove_file(&zip_output_file.path)
-                .await
-                .with_context(|| format!("Deleting uploaded batch zip {zip_output_file}"))?;
-
-            {
-                let mut abandoned_zip_files = abandoned_zip_files.lock().await;
-                abandoned_zip_files.remove(&zip_output_file.path);
-            }
-
-            Ok(())
-        });
-    }
-
-    Ok(())
 }
 
 fn iter_folder_batches(
