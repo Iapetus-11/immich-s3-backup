@@ -86,16 +86,7 @@ async fn dump_and_backup_immich_db(backup_folder: &Path, s3_uploader: &S3Uploade
         .await
         .with_context(|| format!("Creating {DB_BACKUP_FILENAME}"))?;
 
-    let pg_dumpall_result = run_pg_dumpall(dump_file).await;
-
-    if let Err(pg_dumpall_error) = pg_dumpall_result {
-        let rm_dump_file_result = remove_file_if_exists(&dump_file_path).await;
-        if let Err(rm_dump_file_error) = rm_dump_file_result {
-            error!("Failed to clean up dump file: {rm_dump_file_error:?}");
-        }
-
-        return Err(pg_dumpall_error);
-    }
+    run_pg_dumpall(dump_file).await?;
 
     let dump_zip_name = format!("{DB_BACKUP_FILENAME}.zip");
     let dump_zip_path = dump_file_path.with_file_name(&dump_zip_name);
@@ -135,16 +126,6 @@ async fn dump_and_backup_immich_db(backup_folder: &Path, s3_uploader: &S3Uploade
         Ok(())
     }
     .await;
-
-    let rm_dump_file_result = remove_file_if_exists(&dump_file_path).await;
-    if let Err(rm_dump_file_error) = rm_dump_file_result {
-        error!("Failed to clean up dump file: {rm_dump_file_error:?}");
-    }
-
-    let rm_dump_zip_file_result = remove_file_if_exists(&dump_zip_path).await;
-    if let Err(rm_dump_zip_file_error) = rm_dump_zip_file_result {
-        error!("Failed to clean up dump zip file: {rm_dump_zip_file_error:?}");
-    }
 
     pack_and_upload_result
 }
