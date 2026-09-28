@@ -1,37 +1,8 @@
-use async_stream::try_stream;
-use tracing::{error, info};
+use tracing::error;
 
-use crate::{
-    backup::backup_database_and_folders,
-    history::BackupHistoryManager,
-    postgres::run_pg_dumpall,
-    utils::{
-        archives::{PackZipArgs, pack_zip},
-        dir_reader::FileEntry,
-    },
-};
-
-use std::{
-    collections::HashSet,
-    env,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use crate::{backup::backup_database_and_folders, history::BackupHistoryManager};
 
 use anyhow::{Context, Result};
-use chrono::Utc;
-use futures_util::{Stream, StreamExt, pin_mut};
-use tokio::{
-    fs::{self, File},
-    sync::Mutex,
-    task::JoinSet,
-};
-
-use crate::{
-    config::CONFIG,
-    s3_client::initialize_s3_client,
-    utils::{dir_reader::read_dir_recursive, uploader::S3Uploader},
-};
 
 pub async fn run() -> Result<()> {
     let mut history = BackupHistoryManager::new().context("Failed to create history manager")?;

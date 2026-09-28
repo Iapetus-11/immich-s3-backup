@@ -35,13 +35,13 @@ pub async fn pack_zip(
         password,
     };
 
-    spawn_blocking(move || _pack_zip(args))
+    spawn_blocking(move || blocking_pack_zip(args))
         .await
         .context("Failed to pack zip file")??;
     Ok(())
 }
 
-fn _pack_zip(
+fn blocking_pack_zip(
     PackZipArgs {
         source_dir,
         file_entries,

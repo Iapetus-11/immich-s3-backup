@@ -2,7 +2,6 @@ use async_stream::try_stream;
 use tracing::{error, info};
 
 use crate::{
-    history::BackupHistoryManager,
     postgres::run_pg_dumpall,
     utils::{
         archives::{PackZipArgs, pack_zip},
@@ -11,10 +10,8 @@ use crate::{
 };
 
 use std::{
-    collections::HashSet,
     env,
     path::{Path, PathBuf},
-    sync::Arc,
 };
 
 use anyhow::{Context, Result};
@@ -22,7 +19,6 @@ use chrono::Utc;
 use futures_util::{Stream, StreamExt, pin_mut};
 use tokio::{
     fs::{self, File},
-    sync::Mutex,
     task::JoinSet,
 };
 
@@ -36,7 +32,6 @@ pub async fn backup_database_and_folders() -> Result<()> {
     info!("Backing up Immich...");
 
     let backup_name = Utc::now().format("%Y-%m-%d_%H-%M-%S").to_string();
-
     let backup_folder = env::temp_dir().join("backups").join(&backup_name);
 
     fs::create_dir_all(&backup_folder)
@@ -88,56 +83,48 @@ async fn dump_and_backup_immich_db(backup_folder: &Path, s3_uploader: &S3Uploade
 
     run_pg_dumpall(dump_file).await?;
 
+    let dump_file_entry = FileEntry::from_path(dump_file_path.clone())
+        .await
+        .context("Getting file entry for database dump file")?;
+
     let dump_zip_name = format!("{DB_BACKUP_FILENAME}.zip");
     let dump_zip_path = dump_file_path.with_file_name(&dump_zip_name);
-
-    let pack_and_upload_result: Result<()> = async {
-        let dump_file_entry = FileEntry::from_path(dump_file_path.clone())
-            .await
-            .context("Getting file entry for database dump file")?;
-
-        let dump_zip_file = File::create(&dump_zip_path)
-            .await
-            .with_context(|| format!("Creating zip output file {dump_zip_path:?}"))?;
-
-        pack_zip(PackZipArgs {
-            source_dir: backup_folder.to_path_buf(),
-            file_entries: vec![dump_file_entry],
-            output_file: dump_zip_file,
-            compress: true,
-            password: &CONFIG.zip_password,
-        })
+    let dump_zip_file = File::create(&dump_zip_path)
         .await
-        .context("Zipping database dump")?;
+        .with_context(|| format!("Creating zip output file {dump_zip_path:?}"))?;
 
-        if let Err(cleanup_error) = fs::remove_file(&dump_file_path).await {
-            error!("Failed to remove database dump file {dump_file_path:?}: {cleanup_error:?}");
-        }
+    pack_zip(PackZipArgs {
+        source_dir: backup_folder.to_path_buf(),
+        file_entries: vec![dump_file_entry],
+        output_file: dump_zip_file,
+        compress: true,
+        password: &CONFIG.zip_password,
+    })
+    .await
+    .context("Zipping database dump")?;
 
-        let dump_file_zip_entry = FileEntry::from_path(dump_zip_path.clone())
-            .await
-            .context("Getting file entry for database dump zip")?;
-
-        s3_uploader
-            .upload_file(
-                &dump_file_zip_entry,
-                &dump_zip_name,
-                Some("application/zip".to_string()),
-            )
-            .await
-            .context("Uploading database dump")?;
-
-        if let Err(cleanup_error) = fs::remove_file(&dump_zip_path).await {
-            error!(
-                "Failed to remove uploaded database dump zip {dump_zip_path:?}: {cleanup_error:?}"
-            );
-        }
-
-        Ok(())
+    if let Err(cleanup_error) = fs::remove_file(&dump_file_path).await {
+        error!("Failed to remove database dump file {dump_file_path:?}: {cleanup_error:?}");
     }
-    .await;
 
-    pack_and_upload_result
+    let dump_file_zip_entry = FileEntry::from_path(dump_zip_path.clone())
+        .await
+        .context("Getting file entry for database dump zip")?;
+
+    s3_uploader
+        .upload_file(
+            &dump_file_zip_entry,
+            &dump_zip_name,
+            Some("application/zip".to_string()),
+        )
+        .await
+        .context("Uploading database dump")?;
+
+    if let Err(cleanup_error) = fs::remove_file(&dump_zip_path).await {
+        error!("Failed to remove uploaded database dump zip {dump_zip_path:?}: {cleanup_error:?}");
+    }
+
+    Ok(())
 }
 
 async fn backup_all_immich_folders(
@@ -173,7 +160,7 @@ async fn backup_immich_folder(
             let batch_files = batch_files_result
                 .with_context(|| format!("Getting batch {batch_idx} for {target_folder_path:?}"))?;
 
-            let zip_output_path = pack_batch_zip(
+            let batch_zip_file_path = create_batch_zip(
                 &target_folder_path,
                 batch_idx,
                 batch_files,
@@ -181,8 +168,7 @@ async fn backup_immich_folder(
             )
             .await
             .with_context(|| format!("Packing batch {batch_idx} zip"))?;
-
-            let zip_output_file = FileEntry::from_path(zip_output_path)
+            let batch_zip_file_entry = FileEntry::from_path(batch_zip_file_path)
                 .await
                 .with_context(|| format!("Failed to get file entry for batch {batch_idx} zip"))?;
 
@@ -201,15 +187,17 @@ async fn backup_immich_folder(
             upload_tasks.spawn(async move {
                 s3_uploader
                     .upload_file(
-                        &zip_output_file,
+                        &batch_zip_file_entry,
                         &format!("{target_folder_name}/{batch_idx}.zip"),
                         Some("application/zip".to_string()),
                     )
                     .await
                     .with_context(|| format!("Upload batch {batch_idx}"))?;
 
-                if let Err(cleanup_error) = fs::remove_file(&zip_output_file.path).await {
-                    error!("Failed to delete uploaded file {zip_output_file}: {cleanup_error}");
+                if let Err(cleanup_error) = fs::remove_file(&batch_zip_file_entry.path).await {
+                    error!(
+                        "Failed to delete uploaded file {batch_zip_file_entry}: {cleanup_error}"
+                    );
                 }
 
                 Ok(())
@@ -239,14 +227,13 @@ fn iter_folder_batches(
         let mut batch_files: Vec<FileEntry> = vec![];
         let mut batch_size_bytes = 0_u64;
 
-        let dir_reader = read_dir_recursive(&target_folder_path);
+        let dir_reader = read_dir_recursive(target_folder_path.clone());
         pin_mut!(dir_reader);
 
-        while let Some(file_result) = dir_reader.next().await {
-            let file = file_result
+        while let Some(file_entry_result) = dir_reader.next().await {
+            let file_entry = file_entry_result
                 .with_context(|| format!("Reading file entry from {target_folder_path:?}"))?;
-
-            let file_size = file.metadata.len();
+            let file_size = file_entry.metadata.len();
 
             if !batch_files.is_empty()
                 && batch_size_bytes.saturating_add(file_size) > max_batch_size_bytes
@@ -255,8 +242,8 @@ fn iter_folder_batches(
                 batch_size_bytes = 0;
             }
 
-            batch_files.push(file);
-            batch_size_bytes += file_size;
+            batch_files.push(file_entry);
+            batch_size_bytes = batch_size_bytes.saturating_add(file_size);
         }
 
         if !batch_files.is_empty() {
@@ -265,7 +252,7 @@ fn iter_folder_batches(
     }
 }
 
-async fn pack_batch_zip(
+async fn create_batch_zip(
     target_folder_path: &Path,
     batch_idx: usize,
     batch_files: Vec<FileEntry>,
@@ -288,30 +275,15 @@ async fn pack_batch_zip(
 
     match batch_zip_file_result {
         Ok(_) => {
-            let batch_zip_file_size = fs::metadata(&zip_output_path)
-                .await
-                .map(|metadata| format!("{} bytes", metadata.len()))
-                .unwrap_or_else(|_| "failed to determine size".to_string());
-
-            info!("Finished zipping batch {batch_idx} ({batch_zip_file_size})");
-
+            info!("Finished zipping batch {batch_idx}");
             Ok(zip_output_path)
         }
         Err(pack_error) => {
-            // TODO: We can assume the file exists here I think...
-            if let Err(cleanup_error) = remove_file_if_exists(&zip_output_path).await {
+            if let Err(cleanup_error) = fs::remove_file(&zip_output_path).await {
                 error!("Failed to clean up incomplete zip {zip_output_path:?}: {cleanup_error:?}");
             }
 
             Err(pack_error)
         }
-    }
-}
-
-async fn remove_file_if_exists(path: &Path) -> Result<()> {
-    match fs::remove_file(path).await {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error).with_context(|| format!("Deleting file {path:?}")),
     }
 }

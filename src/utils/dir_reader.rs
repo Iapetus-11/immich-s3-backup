@@ -2,6 +2,7 @@ use std::fmt::Display;
 use std::fs::Metadata;
 use std::path::{Path, PathBuf};
 
+use anyhow::{Context, Result};
 use async_stream::stream;
 use futures_util::Stream;
 use tokio::{fs, io};
@@ -27,27 +28,28 @@ impl FileEntry {
     }
 }
 
-pub fn read_dir_recursive(path: impl AsRef<Path>) -> impl Stream<Item = io::Result<FileEntry>> {
-    let root = path.as_ref().to_path_buf();
-
+pub fn read_dir_recursive(root: PathBuf) -> impl Stream<Item = Result<FileEntry>> {
     stream! {
         let mut directories = vec![root];
-
         while let Some(directory) = directories.pop() {
-            let mut entries = fs::read_dir(directory).await?;
+            let mut entries = fs::read_dir(&directory).await.with_context(|| format!("Reading files from directory {directory:?}"))?;
 
             while let Some(entry) = entries.next_entry().await? {
-                let entry_type = entry.file_type().await?; // On most systems this shouldn't block
-                if entry_type.is_symlink() {
-                    continue;
-                }
+                let entry_path = entry.path();
+                let entry_type = entry
+                    .file_type() // On most systems this shouldn't block
+                    .await
+                    .with_context(|| format!("Determining file type of {entry_path:?}"))?;
 
                 if entry_type.is_dir() {
                     directories.push(entry.path());
                     continue;
                 }
+                if !entry_type.is_file() {
+                    continue;
+                }
 
-                let entry = FileEntry::from_path(entry.path()).await?;
+                let entry = FileEntry::from_path(entry_path).await.with_context(|| format!("Constructing file entry from {:?}", entry.path()))?;
                 yield Ok(entry);
             }
         }
