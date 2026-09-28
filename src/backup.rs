@@ -21,7 +21,7 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use futures_util::{Stream, StreamExt, pin_mut};
 use tokio::{
-    fs::{self, File, remove_file},
+    fs::{self, File},
     sync::Mutex,
     task::JoinSet,
 };
@@ -110,6 +110,10 @@ async fn dump_and_backup_immich_db(backup_folder: &Path, s3_uploader: &S3Uploade
         .await
         .context("Zipping database dump")?;
 
+        if let Err(cleanup_error) = fs::remove_file(&dump_file_path).await {
+            error!("Failed to remove database dump file {dump_file_path:?}: {cleanup_error:?}");
+        }
+
         let dump_file_zip_entry = FileEntry::from_path(dump_zip_path.clone())
             .await
             .context("Getting file entry for database dump zip")?;
@@ -123,9 +127,11 @@ async fn dump_and_backup_immich_db(backup_folder: &Path, s3_uploader: &S3Uploade
             .await
             .context("Uploading database dump")?;
 
-        remove_file(dump_zip_path)
-            .await
-            .context("Failed to delete database dump zip file")?;
+        if let Err(cleanup_error) = fs::remove_file(&dump_zip_path).await {
+            error!(
+                "Failed to remove uploaded database dump zip {dump_zip_path:?}: {cleanup_error:?}"
+            );
+        }
 
         Ok(())
     }
@@ -161,7 +167,6 @@ async fn backup_immich_folder(
     pin_mut!(batch_iterator);
 
     let mut upload_tasks = JoinSet::<Result<()>>::new();
-    let abandoned_zip_files = Arc::new(Mutex::new(HashSet::<PathBuf>::new()));
 
     let uploads_result: Result<()> = async {
         while let Some((batch_idx, batch_files_result)) = batch_iterator.next().await {
@@ -176,11 +181,6 @@ async fn backup_immich_folder(
             )
             .await
             .with_context(|| format!("Packing batch {batch_idx} zip"))?;
-
-            {
-                let mut zip_cleanup_paths = abandoned_zip_files.lock().await;
-                zip_cleanup_paths.insert(zip_output_path.clone());
-            }
 
             let zip_output_file = FileEntry::from_path(zip_output_path)
                 .await
@@ -199,7 +199,6 @@ async fn backup_immich_folder(
             {
                 let s3_uploader = s3_uploader.clone();
                 let target_folder_name = target_folder_name.to_string();
-                let abandoned_zip_files = abandoned_zip_files.clone();
                 upload_tasks.spawn(async move {
                     s3_uploader
                         .upload_file(
@@ -210,15 +209,8 @@ async fn backup_immich_folder(
                         .await
                         .with_context(|| format!("Upload batch {batch_idx}"))?;
 
-                    fs::remove_file(&zip_output_file.path)
-                        .await
-                        .with_context(|| {
-                            format!("Deleting uploaded batch zip {zip_output_file}")
-                        })?;
-
-                    {
-                        let mut zip_cleanup_paths = abandoned_zip_files.lock().await;
-                        zip_cleanup_paths.remove(&zip_output_file.path);
+                    if let Err(cleanup_error) = fs::remove_file(&zip_output_file.path).await {
+                        error!("Failed to delete uploaded file {zip_output_file}: {cleanup_error}");
                     }
 
                     Ok(())
@@ -236,14 +228,6 @@ async fn backup_immich_folder(
 
     if uploads_result.is_err() {
         upload_tasks.shutdown().await;
-
-        let zip_cleanup_paths = abandoned_zip_files.lock().await;
-        for zip_cleanup_path in zip_cleanup_paths.iter() {
-            let cleanup_result = remove_file_if_exists(zip_cleanup_path).await;
-            if let Err(cleanup_error) = cleanup_result {
-                error!("Failed to cleanup zip: {cleanup_error:?}")
-            }
-        }
     }
 
     uploads_result
