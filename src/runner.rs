@@ -18,10 +18,10 @@ pub async fn run() -> Result<()> {
         }
 
         return Err(error.context("Failed to backup"));
-    } else {
-        if let Err(error) = history.finish_entry(&history_entry_id, false) {
-            error!("Failed to finish history entry: {error:?}");
-        }
+    }
+
+    if let Err(error) = history.finish_entry(&history_entry_id, false) {
+        error!("Failed to finish history entry: {error:?}");
     }
 
     Ok(())

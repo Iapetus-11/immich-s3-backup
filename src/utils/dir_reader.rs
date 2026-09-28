@@ -1,9 +1,9 @@
 use std::fmt::Display;
 use std::fs::Metadata;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use async_stream::stream;
+use async_stream::try_stream;
 use futures_util::Stream;
 use tokio::{fs, io};
 
@@ -15,7 +15,7 @@ pub struct FileEntry {
 
 impl Display for FileEntry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self.path)
+        write!(f, "{}", self.path.display())
     }
 }
 
@@ -29,7 +29,7 @@ impl FileEntry {
 }
 
 pub fn read_dir_recursive(root: PathBuf) -> impl Stream<Item = Result<FileEntry>> {
-    stream! {
+    try_stream! {
         let mut directories = vec![root];
         while let Some(directory) = directories.pop() {
             let mut entries = fs::read_dir(&directory).await.with_context(|| format!("Reading files from directory {directory:?}"))?;
@@ -49,8 +49,7 @@ pub fn read_dir_recursive(root: PathBuf) -> impl Stream<Item = Result<FileEntry>
                     continue;
                 }
 
-                let entry = FileEntry::from_path(entry_path).await.with_context(|| format!("Constructing file entry from {:?}", entry.path()))?;
-                yield Ok(entry);
+                yield FileEntry::from_path(entry_path).await.with_context(|| format!("Constructing file entry from {:?}", entry.path()))?;
             }
         }
     }

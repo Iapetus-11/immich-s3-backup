@@ -76,7 +76,7 @@ async fn dump_and_backup_immich_db(backup_folder: &Path, s3_uploader: &S3Uploade
 
     info!("Dumping immich database...");
 
-    let dump_file_path = PathBuf::from(backup_folder).join(DB_BACKUP_FILENAME);
+    let dump_file_path = backup_folder.join(DB_BACKUP_FILENAME);
     let dump_file = File::create(&dump_file_path)
         .await
         .with_context(|| format!("Creating {DB_BACKUP_FILENAME}"))?;
@@ -274,7 +274,7 @@ async fn create_batch_zip(
     .with_context(|| format!("Zipping {target_folder_path:?} (batch {batch_idx})"));
 
     match batch_zip_file_result {
-        Ok(_) => {
+        Ok(()) => {
             info!("Finished zipping batch {batch_idx}");
             Ok(zip_output_path)
         }

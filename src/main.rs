@@ -27,10 +27,8 @@ async fn main() {
 
     if CONFIG.forever {
         scheduler::BackupScheduler.run_forever().await;
-    } else {
-        if let Err(error) = runner::run().await {
-            error!("{error:?}");
-            process::exit(1);
-        }
+    } else if let Err(error) = runner::run().await {
+        error!("{error:?}");
+        process::exit(1);
     }
 }

@@ -139,5 +139,5 @@ pub static CONFIG: LazyLock<Config> = LazyLock::new(|| {
 });
 
 pub fn force_load_config() {
-    let _ = *CONFIG;
+    LazyLock::force(&CONFIG);
 }

@@ -13,26 +13,17 @@ pub async fn run_pg_dumpall(dump_file: File) -> Result<()> {
         cmd
     };
 
-    let pg_dumpall_result = pg_dumpall_cmd
+    let pg_dumpall_status = pg_dumpall_cmd
         .stdout(dump_file.into_std().await)
         .status()
         .await
-        .with_context(|| "Running pg_dumpall".to_string());
+        .with_context(|| "Running pg_dumpall".to_string())?;
 
-    match pg_dumpall_result {
-        Ok(pg_dumpall_output) => {
-            if !pg_dumpall_output.success() {
-                let error_code = pg_dumpall_output
-                    .code()
-                    .map(|code| code.to_string())
-                    .unwrap_or_else(|| "unknown".to_string());
-                bail!("Error exit code from pg_dumpall: {error_code}")
-            } else {
-                Ok(())
-            }
-        }
-        Err(error) => Err(error),
+    if !pg_dumpall_status.success() {
+        bail!("pg_dumpall failed with status {pg_dumpall_status}");
     }
+
+    Ok(())
 }
 
 fn apply_connection_options(cmd: &mut Command) {

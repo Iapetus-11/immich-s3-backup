@@ -40,7 +40,7 @@ impl BackupScheduler {
 
     pub async fn run_forever(self) {
         loop {
-            let duration_until_next_backup = match self.get_duration_until_next_backup() {
+            let mut duration_until_next_backup = match self.get_duration_until_next_backup() {
                 Ok(duration) => duration,
                 Err(error) => {
                     error!("Failed to get duration until next backup: {error:?}");
@@ -51,6 +51,8 @@ impl BackupScheduler {
                     continue;
                 }
             };
+            duration_until_next_backup = duration_until_next_backup.max(Duration::from_secs(5));
+
             time::sleep(duration_until_next_backup).await;
 
             if let Err(error) = runner::run().await {
