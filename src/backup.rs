@@ -21,7 +21,7 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use futures_util::{Stream, StreamExt, pin_mut};
 use tokio::{
-    fs::{self, File},
+    fs::{self, File, remove_file},
     sync::Mutex,
     task::JoinSet,
 };
@@ -122,6 +122,10 @@ async fn dump_and_backup_immich_db(backup_folder: &Path, s3_uploader: &S3Uploade
             )
             .await
             .context("Uploading database dump")?;
+
+        remove_file(dump_zip_path)
+            .await
+            .context("Failed to delete database dump zip file")?;
 
         Ok(())
     }
