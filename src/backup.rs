@@ -196,26 +196,24 @@ async fn backup_immich_folder(
                 }
             }
 
-            {
-                let s3_uploader = s3_uploader.clone();
-                let target_folder_name = target_folder_name.to_string();
-                upload_tasks.spawn(async move {
-                    s3_uploader
-                        .upload_file(
-                            &zip_output_file,
-                            &format!("{target_folder_name}/{batch_idx}.zip"),
-                            Some("application/zip".to_string()),
-                        )
-                        .await
-                        .with_context(|| format!("Upload batch {batch_idx}"))?;
+            let s3_uploader = s3_uploader.clone();
+            let target_folder_name = target_folder_name.to_string();
+            upload_tasks.spawn(async move {
+                s3_uploader
+                    .upload_file(
+                        &zip_output_file,
+                        &format!("{target_folder_name}/{batch_idx}.zip"),
+                        Some("application/zip".to_string()),
+                    )
+                    .await
+                    .with_context(|| format!("Upload batch {batch_idx}"))?;
 
-                    if let Err(cleanup_error) = fs::remove_file(&zip_output_file.path).await {
-                        error!("Failed to delete uploaded file {zip_output_file}: {cleanup_error}");
-                    }
+                if let Err(cleanup_error) = fs::remove_file(&zip_output_file.path).await {
+                    error!("Failed to delete uploaded file {zip_output_file}: {cleanup_error}");
+                }
 
-                    Ok(())
-                });
-            }
+                Ok(())
+            });
         }
 
         while let Some(next_upload_result) = upload_tasks.join_next().await {
@@ -300,6 +298,7 @@ async fn pack_batch_zip(
             Ok(zip_output_path)
         }
         Err(pack_error) => {
+            // TODO: We can assume the file exists here I think...
             if let Err(cleanup_error) = remove_file_if_exists(&zip_output_path).await {
                 error!("Failed to clean up incomplete zip {zip_output_path:?}: {cleanup_error:?}");
             }
