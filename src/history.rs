@@ -13,7 +13,8 @@ pub struct BackupHistoryManager {
 
 impl BackupHistoryManager {
     pub fn new() -> Result<Self> {
-        let db = Connection::open(&CONFIG.history_file).context("Opening Sqlite DB")?;
+        let db =
+            Connection::open(&CONFIG.history_file).context("opening backup history database")?;
         let mut self_ = Self { db };
 
         self_.ensure_table()?;
@@ -24,7 +25,7 @@ impl BackupHistoryManager {
     fn ensure_table(&mut self) -> Result<()> {
         self.db
             .execute(include_str!("sql/create_history_table.sql"), ())
-            .context("Creating history table")?;
+            .context("creating backup history table")?;
         Ok(())
     }
 
@@ -34,7 +35,7 @@ impl BackupHistoryManager {
 
         self.db
             .execute(include_str!("sql/start_history_entry.sql"), (id.0, now))
-            .context("Creating history record")?;
+            .context("creating backup history entry")?;
 
         Ok(id)
     }
@@ -46,21 +47,27 @@ impl BackupHistoryManager {
                 include_str!("sql/finish_history_entry.sql"),
                 (id.0, failed, now),
             )
-            .context("Updating history record")?;
+            .context("updating backup history entry")?;
         Ok(())
     }
 
     pub fn get_last_successful_entry(&mut self) -> Result<Option<DateTime<Utc>>> {
         let mut stmt = self
             .db
-            .prepare(include_str!("sql/get_last_successful_history_entry.sql"))?;
+            .prepare(include_str!("sql/get_last_successful_history_entry.sql"))
+            .context("preparing last successful backup query")?;
 
-        let last_entry = stmt.query_map((), |row| row.get(0))?.next();
+        let last_entry = stmt
+            .query_map((), |row| row.get(0))
+            .context("querying last successful backup")?
+            .next();
 
         let Some(last_entry) = last_entry else {
             return Ok(None);
         };
 
-        Ok(Some(last_entry?))
+        Ok(Some(
+            last_entry.context("reading last successful backup timestamp")?,
+        ))
     }
 }

@@ -17,7 +17,7 @@ pub async fn run_pg_dumpall(dump_file: File) -> Result<()> {
         .stdout(dump_file.into_std().await)
         .status()
         .await
-        .with_context(|| "Running pg_dumpall".to_string())?;
+        .context("running pg_dumpall command")?;
 
     if !pg_dumpall_status.success() {
         bail!("pg_dumpall failed with status {pg_dumpall_status}");

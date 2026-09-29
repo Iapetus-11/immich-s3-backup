@@ -29,14 +29,13 @@ use crate::{
 };
 
 pub async fn backup_database_and_folders() -> Result<()> {
-    info!("Backing up Immich...");
-
     let backup_name = Utc::now().format("%Y-%m-%d_%H-%M-%S").to_string();
+    info!("Starting immich backup {backup_name}");
     let backup_folder = env::temp_dir().join("backups").join(&backup_name);
 
     fs::create_dir_all(&backup_folder)
         .await
-        .with_context(|| format!("Creating dir {}", backup_folder.to_string_lossy()))?;
+        .with_context(|| format!("creating backup directory {}", backup_folder.display()))?;
 
     let s3_client = initialize_s3_client();
     let s3_uploader = S3Uploader::new(
@@ -50,23 +49,26 @@ pub async fn backup_database_and_folders() -> Result<()> {
     let backup_result: Result<()> = async {
         dump_and_backup_immich_db(&backup_folder, &s3_uploader)
             .await
-            .context("Backing up immich DB")?;
+            .context("backing up Immich database")?;
 
         backup_all_immich_folders(&backup_folder, &s3_uploader)
             .await
-            .context("Backing up immich folders")?;
+            .context("backing up Immich folders")?;
 
         Ok(())
     }
     .await;
 
     if let Err(error) = fs::remove_dir_all(&backup_folder).await {
-        error!("Failed to remove backup folder {backup_folder:?}: {error:?}");
+        error!(
+            path = %backup_folder.display(),
+            "Failed to remove temporary backup directory: {error}"
+        );
     }
 
     backup_result?;
 
-    info!("Done!");
+    info!(backup_name, "Backup files uploaded successfully");
 
     Ok(())
 }
@@ -74,24 +76,24 @@ pub async fn backup_database_and_folders() -> Result<()> {
 async fn dump_and_backup_immich_db(backup_folder: &Path, s3_uploader: &S3Uploader) -> Result<()> {
     const DB_BACKUP_FILENAME: &str = "db-backup.sql";
 
-    info!("Dumping immich database...");
+    info!("Dumping Immich database");
 
     let dump_file_path = backup_folder.join(DB_BACKUP_FILENAME);
     let dump_file = File::create(&dump_file_path)
         .await
-        .with_context(|| format!("Creating {DB_BACKUP_FILENAME}"))?;
+        .with_context(|| format!("creating dump output file {DB_BACKUP_FILENAME}"))?;
 
     run_pg_dumpall(dump_file).await?;
 
     let dump_file_entry = FileEntry::from_path(dump_file_path.clone())
         .await
-        .context("Getting file entry for database dump file")?;
+        .context("getting database dump file entry")?;
 
     let dump_zip_name = format!("{DB_BACKUP_FILENAME}.zip");
     let dump_zip_path = dump_file_path.with_file_name(&dump_zip_name);
     let dump_zip_file = File::create(&dump_zip_path)
         .await
-        .with_context(|| format!("Creating zip output file {dump_zip_path:?}"))?;
+        .with_context(|| format!("creating zip output file {}", dump_zip_path.display()))?;
 
     pack_zip(PackZipArgs {
         source_dir: backup_folder.to_path_buf(),
@@ -101,15 +103,18 @@ async fn dump_and_backup_immich_db(backup_folder: &Path, s3_uploader: &S3Uploade
         password: &CONFIG.zip_password,
     })
     .await
-    .context("Zipping database dump")?;
+    .context("zipping database dump")?;
 
-    if let Err(cleanup_error) = fs::remove_file(&dump_file_path).await {
-        error!("Failed to remove database dump file {dump_file_path:?}: {cleanup_error:?}");
+    if let Err(error) = fs::remove_file(&dump_file_path).await {
+        error!(
+            path = %dump_file_path.display(),
+            "Failed to remove database dump file: {error}"
+        );
     }
 
     let dump_file_zip_entry = FileEntry::from_path(dump_zip_path.clone())
         .await
-        .context("Getting file entry for database dump zip")?;
+        .context("getting database dump archive file entry")?;
 
     s3_uploader
         .upload_file(
@@ -118,10 +123,13 @@ async fn dump_and_backup_immich_db(backup_folder: &Path, s3_uploader: &S3Uploade
             Some("application/zip".to_string()),
         )
         .await
-        .context("Uploading database dump")?;
+        .context("uploading database dump")?;
 
-    if let Err(cleanup_error) = fs::remove_file(&dump_zip_path).await {
-        error!("Failed to remove uploaded database dump zip {dump_zip_path:?}: {cleanup_error:?}");
+    if let Err(error) = fs::remove_file(&dump_zip_path).await {
+        error!(
+            path = %dump_zip_path.display(),
+            "Failed to remove uploaded database dump archive: {error}"
+        );
     }
 
     Ok(())
@@ -132,8 +140,6 @@ async fn backup_all_immich_folders(
     s3_uploader: &S3Uploader,
 ) -> Result<()> {
     const FOLDERS_TO_BACKUP: &[&str] = &["library", "upload", "profile"];
-
-    info!("Zipping immich data...");
 
     for target_folder_name in FOLDERS_TO_BACKUP {
         backup_immich_folder(backup_output_folder, target_folder_name, s3_uploader).await?;
@@ -157,25 +163,30 @@ async fn backup_immich_folder(
 
     let uploads_result: Result<()> = async {
         while let Some((batch_idx, batch_files_result)) = batch_iterator.next().await {
-            let batch_files = batch_files_result
-                .with_context(|| format!("Getting batch {batch_idx} for {target_folder_path:?}"))?;
+            let batch_files = batch_files_result.with_context(|| {
+                format!(
+                    "getting batch {batch_idx} for {}",
+                    target_folder_path.display()
+                )
+            })?;
 
             let batch_zip_file_entry = create_batch_zip(
                 &target_folder_path,
+                target_folder_name,
                 batch_idx,
                 batch_files,
                 backup_output_folder,
             )
             .await
-            .with_context(|| format!("Packing batch {batch_idx} zip"))?;
+            .with_context(|| format!("packing batch {batch_idx} archive"))?;
 
             if upload_tasks.len() >= CONFIG.file_upload_concurrency {
                 info!(
-                    "Waiting on previous upload to complete before uploading batch {batch_idx}..."
+                    "Waiting on previous upload to complete before uploading {target_folder_name} batch {batch_idx}..."
                 );
 
                 if let Some(next_upload_result) = upload_tasks.join_next().await {
-                    next_upload_result.context("Waiting on next upload result")??;
+                    next_upload_result.context("waiting for upload task")??;
                 }
             }
 
@@ -189,7 +200,7 @@ async fn backup_immich_folder(
         }
 
         while let Some(next_upload_result) = upload_tasks.join_next().await {
-            next_upload_result.context("Waiting on next upload result")??;
+            next_upload_result.context("waiting for upload task")??;
         }
 
         Ok(())
@@ -218,10 +229,15 @@ fn spawn_batch_upload_task(
                 Some("application/zip".to_string()),
             )
             .await
-            .with_context(|| format!("Upload batch {batch_idx}"))?;
+            .with_context(|| format!("uploading batch {batch_idx}"))?;
 
-        if let Err(cleanup_error) = fs::remove_file(&batch_zip_file_entry.path).await {
-            error!("Failed to delete uploaded file {batch_zip_file_entry}: {cleanup_error}");
+        if let Err(error) = fs::remove_file(&batch_zip_file_entry.path).await {
+            error!(
+                folder = target_folder_name,
+                batch = batch_idx,
+                path = %batch_zip_file_entry,
+                "Failed to remove uploaded batch archive: {error}"
+            );
         }
 
         Ok(())
@@ -240,8 +256,9 @@ fn iter_folder_batches(
         pin_mut!(dir_reader);
 
         while let Some(file_entry_result) = dir_reader.next().await {
-            let file_entry = file_entry_result
-                .with_context(|| format!("Reading file entry from {target_folder_path:?}"))?;
+            let file_entry = file_entry_result.with_context(|| {
+                format!("reading file entry from {}", target_folder_path.display())
+            })?;
             let file_size = file_entry.metadata.len();
 
             if !batch_files.is_empty()
@@ -263,37 +280,58 @@ fn iter_folder_batches(
 
 async fn create_batch_zip(
     target_folder_path: &Path,
+    target_folder_name: &str,
     batch_idx: usize,
-    batch_files: Vec<FileEntry>,
+    file_entries: Vec<FileEntry>,
     backup_output_folder: &Path,
 ) -> Result<FileEntry> {
+    info!(
+        folder = target_folder_name,
+        batch = batch_idx,
+        files = file_entries.len(),
+        "Zipping backup batch..."
+    );
+
     let output_path = backup_output_folder.join(format!("{batch_idx}.zip"));
     let output_file = File::create(&output_path)
         .await
-        .with_context(|| format!("Creating zip output file {output_path:?}"))?;
+        .with_context(|| format!("creating zip output file {}", output_path.display()))?;
 
     let zip_result = pack_zip(PackZipArgs {
         source_dir: CONFIG.upload_location.clone(),
-        file_entries: batch_files,
+        file_entries,
         output_file,
         compress: false,
         password: &CONFIG.zip_password,
     })
     .await
-    .with_context(|| format!("Zipping {target_folder_path:?} (batch {batch_idx})"));
+    .with_context(|| {
+        format!(
+            "zipping {} (batch {batch_idx})",
+            target_folder_path.display()
+        )
+    });
 
     if let Err(zip_error) = zip_result {
-        if let Err(cleanup_error) = fs::remove_file(&output_path).await {
-            error!("Failed to clean up incomplete zip {output_path:?}: {cleanup_error:?}");
+        if let Err(error) = fs::remove_file(&output_path).await {
+            error!(
+                batch = batch_idx,
+                path = %output_path.display(),
+                "Failed to remove incomplete batch archive: {error}"
+            );
         }
         return Err(zip_error);
     }
 
     let output_file_entry = FileEntry::from_path(output_path)
         .await
-        .with_context(|| format!("Failed to get file entry for batch {batch_idx} zip"))?;
+        .with_context(|| format!("getting file entry for batch {batch_idx} archive"))?;
 
-    info!("Finished zipping batch {batch_idx}");
+    info!(
+        folder = target_folder_name,
+        batch = batch_idx,
+        "Finished zipping backup batch"
+    );
 
     Ok(output_file_entry)
 }

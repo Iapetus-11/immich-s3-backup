@@ -32,14 +32,20 @@ pub fn read_dir_recursive(root: PathBuf) -> impl Stream<Item = Result<FileEntry>
     try_stream! {
         let mut directories = vec![root];
         while let Some(directory) = directories.pop() {
-            let mut entries = fs::read_dir(&directory).await.with_context(|| format!("Reading files from directory {directory:?}"))?;
+            let mut entries = fs::read_dir(&directory)
+                .await
+                .with_context(|| {
+                    format!("reading files from directory {}", directory.display())
+                })?;
 
             while let Some(entry) = entries.next_entry().await? {
                 let entry_path = entry.path();
                 let entry_type = entry
                     .file_type() // On most systems this shouldn't block
                     .await
-                    .with_context(|| format!("Determining file type of {entry_path:?}"))?;
+                    .with_context(|| {
+                        format!("determining file type of {}", entry_path.display())
+                    })?;
 
                 if entry_type.is_dir() {
                     directories.push(entry.path());
@@ -49,7 +55,11 @@ pub fn read_dir_recursive(root: PathBuf) -> impl Stream<Item = Result<FileEntry>
                     continue;
                 }
 
-                yield FileEntry::from_path(entry_path).await.with_context(|| format!("Constructing file entry from {:?}", entry.path()))?;
+                yield FileEntry::from_path(entry_path)
+                    .await
+                    .with_context(|| {
+                        format!("constructing file entry from {}", entry.path().display())
+                    })?;
             }
         }
     }

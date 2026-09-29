@@ -37,7 +37,7 @@ pub async fn pack_zip(
 
     spawn_blocking(move || blocking_pack_zip(args))
         .await
-        .context("Failed to pack zip file")??;
+        .context("packing zip file")??;
     Ok(())
 }
 
@@ -56,10 +56,10 @@ fn blocking_pack_zip(
 
     for file_entry in &file_entries {
         write_file_to_zip(&source_dir, file_entry, &mut zip_writer, zip_options)
-            .with_context(|| format!("Failed to write {file_entry} to zip"))?;
+            .with_context(|| format!("writing {file_entry} to zip"))?;
     }
 
-    zip_writer.finish().context("Failed to finalize zip")?;
+    zip_writer.finish().context("finalizing zip")?;
 
     Ok(())
 }
@@ -92,16 +92,21 @@ fn write_file_to_zip<ZW: io::Write + io::Seek>(
         .path
         .strip_prefix(source_dir)
         .ok()
-        .with_context(|| format!("{file_entry} is outside of {source_dir:?}"))?;
+        .with_context(|| {
+            format!(
+                "getting {file_entry} path relative to {}",
+                source_dir.display()
+            )
+        })?;
 
     zip_writer
         .start_file_from_path(relative_entry_path, options)
-        .with_context(|| format!("Starting file {file_entry}"))?;
+        .with_context(|| format!("starting zip entry for {file_entry}"))?;
 
-    let mut file = File::open(&file_entry.path).with_context(|| format!("Opening {file_entry}"))?;
+    let mut file = File::open(&file_entry.path).with_context(|| format!("opening {file_entry}"))?;
 
     io::copy(&mut file, zip_writer)
-        .with_context(|| format!("Copying data from {file_entry} into zip"))?;
+        .with_context(|| format!("copying data from {file_entry} into zip"))?;
 
     Ok(())
 }

@@ -38,10 +38,15 @@ impl S3Uploader {
         key: &str,
         content_type: Option<String>,
     ) -> Result<()> {
-        info!("Uploading {file}...");
-
         let key = format!("{}/{key}", self.base_object_key);
         let key = key.trim_matches('/');
+
+        info!(
+            file = %file,
+            bucket = %self.bucket_name,
+            object_key = key,
+            "Uploading file"
+        );
 
         let create_response = self
             .s3_client
@@ -51,7 +56,7 @@ impl S3Uploader {
             .set_content_type(content_type)
             .send()
             .await
-            .context("Starting multipart upload")?;
+            .context("starting multipart upload")?;
         let upload_id = create_response.upload_id().unwrap_or_default(); // This should always be present
 
         let upload_result = async {
@@ -71,7 +76,7 @@ impl S3Uploader {
                 .multipart_upload(complete_input)
                 .send()
                 .await
-                .with_context(|| format!("Finalizing multipart upload for file {file}"))?;
+                .with_context(|| format!("finalizing multipart upload for {file}"))?;
 
             Ok(())
         }
@@ -87,11 +92,21 @@ impl S3Uploader {
                 .send()
                 .await;
 
-            if let Err(cleanup_error) = cleanup_result {
-                error!("Failed to abort multipart upload: {cleanup_error:?}");
+            if let Err(error) = cleanup_result {
+                error!(
+                    bucket = %self.bucket_name,
+                    object_key = key,
+                    upload_id,
+                    "Failed to abort multipart upload: {error}"
+                );
             }
         } else {
-            info!("Done uploading {file}");
+            info!(
+                file = %file,
+                bucket = %self.bucket_name,
+                object_key = key,
+                "Finished uploading file"
+            );
         }
 
         upload_result
@@ -132,7 +147,7 @@ impl S3Uploader {
             .length(byte_stream_length)
             .build()
             .await
-            .with_context(|| format!("Creating ByteStream from file {file}"))?;
+            .with_context(|| format!("creating byte stream from {file}"))?;
 
         let upload_response = self
             .s3_client
@@ -144,7 +159,7 @@ impl S3Uploader {
             .body(byte_stream)
             .send()
             .await
-            .with_context(|| format!("Uploading part {part_idx} from file {file}"))?;
+            .with_context(|| format!("uploading part {part_idx} from {file}"))?;
 
         Ok(CompletedPart::builder()
             .e_tag(upload_response.e_tag().unwrap_or_default()) // e-tag should always be present

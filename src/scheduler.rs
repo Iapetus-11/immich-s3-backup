@@ -13,11 +13,11 @@ pub struct BackupScheduler;
 
 impl BackupScheduler {
     fn get_duration_until_next_backup(&self) -> Result<Duration> {
-        let mut history = BackupHistoryManager::new().context("Opening backup history manager")?;
+        let mut history = BackupHistoryManager::new().context("opening backup history manager")?;
 
         let last_backup_at = history
             .get_last_successful_entry()
-            .context("Getting last entry")?;
+            .context("getting last successful backup")?;
 
         let Some(last_backup_at) = last_backup_at else {
             return Ok(Duration::ZERO);
@@ -43,9 +43,9 @@ impl BackupScheduler {
             let mut duration_until_next_backup = match self.get_duration_until_next_backup() {
                 Ok(duration) => duration,
                 Err(error) => {
-                    error!("Failed to get duration until next backup: {error:?}");
+                    error!("Failed to schedule next backup: {error:#}");
 
-                    info!("Retrying in 5 seconds...");
+                    info!("Retrying backup scheduling in 5 seconds...");
                     time::sleep(Duration::from_secs(5)).await;
 
                     continue;
@@ -53,10 +53,14 @@ impl BackupScheduler {
             };
             duration_until_next_backup = duration_until_next_backup.max(Duration::from_secs(5));
 
+            info!(
+                "Waiting {} seconds until next backup...",
+                duration_until_next_backup.as_secs()
+            );
             time::sleep(duration_until_next_backup).await;
 
             if let Err(error) = runner::run().await {
-                error!("Failed to run backup: {error:?}");
+                error!("Backup failed: {error:#}");
             }
         }
     }
