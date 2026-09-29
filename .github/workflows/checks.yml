@@ -1,11 +1,14 @@
 name: Checks
 
-on: [push, pull_request]
+on:
+  push:
+    branches-ignore: [master]
+  pull_request:
+  workflow_call:
 
 jobs:
   checks:
     runs-on: ubuntu-latest
-    if: github.actor != 'dependabot[bot]'
 
     steps:
       - uses: actions/checkout@v7

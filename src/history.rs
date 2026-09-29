@@ -71,3 +71,48 @@ impl BackupHistoryManager {
         ))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use chrono::TimeZone;
+
+    #[test]
+    fn get_last_successful_entry_ignores_unfinished_backups() {
+        let db = Connection::open_in_memory().unwrap();
+        let mut history = BackupHistoryManager { db };
+        history.ensure_table().unwrap();
+
+        let completed_backup_started_at = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        history
+            .db
+            .execute(
+                include_str!("sql/start_history_entry.sql"),
+                (1, completed_backup_started_at),
+            )
+            .unwrap();
+
+        let completed_backup_ended_at = Utc.with_ymd_and_hms(2026, 1, 1, 1, 0, 0).unwrap();
+        history
+            .db
+            .execute(
+                include_str!("sql/finish_history_entry.sql"),
+                (1, false, completed_backup_ended_at),
+            )
+            .unwrap();
+
+        let unfinished_backup_started_at = Utc.with_ymd_and_hms(2026, 2, 1, 0, 0, 0).unwrap();
+        history
+            .db
+            .execute(
+                include_str!("sql/start_history_entry.sql"),
+                (2, unfinished_backup_started_at),
+            )
+            .unwrap();
+
+        let last_successful = history.get_last_successful_entry().unwrap();
+
+        assert_eq!(last_successful, Some(completed_backup_started_at));
+    }
+}

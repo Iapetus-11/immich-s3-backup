@@ -170,6 +170,16 @@ async fn backup_immich_folder(
                 )
             })?;
 
+            if upload_tasks.len() >= CONFIG.file_upload_concurrency {
+                info!(
+                    "Waiting on previous upload to complete before packing {target_folder_name} batch {batch_idx}..."
+                );
+
+                if let Some(next_upload_result) = upload_tasks.join_next().await {
+                    next_upload_result.context("waiting for upload task")??;
+                }
+            }
+
             let batch_zip_file_entry = create_batch_zip(
                 &target_folder_path,
                 target_folder_name,
@@ -179,16 +189,6 @@ async fn backup_immich_folder(
             )
             .await
             .with_context(|| format!("packing batch {batch_idx} archive"))?;
-
-            if upload_tasks.len() >= CONFIG.file_upload_concurrency {
-                info!(
-                    "Waiting on previous upload to complete before uploading {target_folder_name} batch {batch_idx}..."
-                );
-
-                if let Some(next_upload_result) = upload_tasks.join_next().await {
-                    next_upload_result.context("waiting for upload task")??;
-                }
-            }
 
             spawn_batch_upload_task(
                 s3_uploader.clone(),
