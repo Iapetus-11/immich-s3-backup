@@ -1,12 +1,12 @@
-use async_stream::try_stream;
-use tracing::{error, info};
-
 use crate::{
+    config::Config,
     postgres::run_pg_dumpall,
+    s3_client::initialize_s3_client,
     utils::{
         archives::{PackZipArgs, pack_zip},
         dir_reader::FileEntry,
     },
+    utils::{dir_reader::read_dir_recursive, uploader::S3Uploader},
 };
 
 use std::{
@@ -23,13 +23,10 @@ use tokio::{
     task::JoinSet,
 };
 
-use crate::{
-    config::CONFIG,
-    s3_client::initialize_s3_client,
-    utils::{dir_reader::read_dir_recursive, uploader::S3Uploader},
-};
+use async_stream::try_stream;
+use tracing::{error, info};
 
-pub async fn backup_database_and_folders() -> Result<()> {
+pub async fn backup_database_and_folders(config: Config) -> Result<()> {
     let backup_name = Utc::now().format("%Y-%m-%d_%H-%M-%S").to_string();
     info!("Starting immich backup {backup_name}");
     let backup_folder = env::temp_dir().join("backups").join(&backup_name);

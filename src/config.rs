@@ -133,13 +133,8 @@ pub struct Config {
     pub zip_password: String,
 }
 
-pub static CONFIG: LazyLock<Config> = LazyLock::new(|| {
-    let _ = dotenv();
+pub fn load_config() -> Config {
     Config::parse()
-});
-
-pub fn force_load_config() {
-    LazyLock::force(&CONFIG);
 }
 
 #[cfg(test)]

@@ -2,7 +2,7 @@ use std::process;
 
 use tracing::{Level, error};
 
-use crate::config::{CONFIG, force_load_config};
+use crate::config::{CONFIG, load_config};
 
 mod backup;
 mod config;
@@ -15,8 +15,6 @@ mod utils;
 
 #[tokio::main]
 async fn main() {
-    force_load_config();
-
     tracing::subscriber::set_global_default(
         tracing_subscriber::FmtSubscriber::builder()
             .with_ansi(true)
@@ -25,7 +23,9 @@ async fn main() {
     )
     .unwrap();
 
-    if CONFIG.forever {
+    let config = load_config();
+
+    if config.forever {
         scheduler::BackupScheduler.run_forever().await;
     } else if let Err(error) = runner::run().await {
         error!("Backup failed: {error:?}");

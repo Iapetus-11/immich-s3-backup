@@ -1,17 +1,18 @@
 use tracing::error;
 
+use crate::config::Config;
 use crate::{backup::backup_database_and_folders, history::BackupHistoryManager};
 
 use anyhow::{Context, Result};
 
-pub async fn run() -> Result<()> {
+pub async fn run(config: Config) -> Result<()> {
     let mut history = BackupHistoryManager::new().context("creating backup history manager")?;
 
     let history_entry_id = history
         .start_entry()
         .context("starting backup history entry")?;
 
-    let result = backup_database_and_folders().await;
+    let result = backup_database_and_folders(config).await;
     if let Err(error) = result {
         if let Err(error) = history.finish_entry(&history_entry_id, true) {
             error!(
