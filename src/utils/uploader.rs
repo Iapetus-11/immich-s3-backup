@@ -57,7 +57,9 @@ impl S3Uploader {
             .send()
             .await
             .context("starting multipart upload")?;
-        let upload_id = create_response.upload_id().unwrap_or_default(); // This should always be present
+        let upload_id = create_response
+            .upload_id()
+            .context("multipart upload response is missing an upload ID")?;
 
         let upload_result = async {
             let upload_parts = self
@@ -118,9 +120,16 @@ impl S3Uploader {
         key: &str,
         upload_id: &str,
     ) -> Result<Vec<CompletedPart>> {
-        let part_count = file.metadata.len().div_ceil(self.multipart_chunk_size) as i32;
+        const MAX_PART_COUNT: i32 = 10_000;
+
+        let part_count = i32::try_from(file.metadata.len().div_ceil(self.multipart_chunk_size))?;
         if part_count < 1 {
             bail!("File {file} is empty");
+        }
+        if part_count > MAX_PART_COUNT {
+            bail!(
+                "File {file} needs {part_count} parts, but S3 allows at most {MAX_PART_COUNT}; increase the multipart chunk size"
+            );
         }
 
         let upload_part_futures = stream::iter(1..=part_count)
@@ -161,8 +170,12 @@ impl S3Uploader {
             .await
             .with_context(|| format!("uploading part {part_idx} from {file}"))?;
 
+        let e_tag = upload_response
+            .e_tag()
+            .with_context(|| format!("upload response for part {part_idx} is missing an ETag"))?;
+
         Ok(CompletedPart::builder()
-            .e_tag(upload_response.e_tag().unwrap_or_default()) // e-tag should always be present
+            .e_tag(e_tag)
             .part_number(part_idx)
             .build())
     }

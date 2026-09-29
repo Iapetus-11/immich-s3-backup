@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::LazyLock};
 
-use clap::{Parser, value_parser};
+use clap::{Parser, builder::RangedU64ValueParser, value_parser};
 use dotenvy::dotenv;
 
 #[derive(Debug, clap::Parser)]
@@ -87,7 +87,7 @@ pub struct Config {
     #[arg(
         long,
         env = "BACKUP_MULTIPART_CHUNK_SIZE",
-        default_value = "67110000", // 64 MiB
+        default_value = "67108864", // 64 MiB
         value_parser = value_parser!(u64).range(5 * 1024 * 1024..=5 * 1024 * 1024 * 1024)
     )]
     /// Exceeding 2.5 GiB may cause uploads to fail.
@@ -97,7 +97,7 @@ pub struct Config {
         long,
         env = "BACKUP_FILE_UPLOAD_CONCURRENCY",
         default_value = "1",
-        value_parser = value_parser!(u64).range(1..)
+        value_parser = RangedU64ValueParser::<usize>::new().range(1..)
     )]
     /// Increasing this number increases the free space required, because more batch zips will be
     /// stored on disk for upload, so you may want to decrease $BACKUP_BATCH_SIZE_BYTES.
@@ -107,7 +107,7 @@ pub struct Config {
         long,
         env = "BACKUP_FILE_CHUNK_UPLOAD_CONCURRENCY",
         default_value = "3",
-        value_parser = value_parser!(u64).range(1..)
+        value_parser = RangedU64ValueParser::<usize>::new().range(1..)
     )]
     /// This value can be multiplied by $BACKUP_FILE_UPLOAD_CONCURRENCY to determine the maximum
     /// amount of concurrent uploads.
@@ -140,4 +140,30 @@ pub static CONFIG: LazyLock<Config> = LazyLock::new(|| {
 
 pub fn force_load_config() {
     LazyLock::force(&CONFIG);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use clap::CommandFactory;
+
+    #[test]
+    fn config_definition_is_valid() {
+        Config::command().debug_assert();
+    }
+
+    #[test]
+    fn config_parses_with_defaults() {
+        Config::try_parse_from([
+            "immich_s3_backup",
+            "--db-password=x",
+            "--upload-location=/tmp",
+            "--aws-access-key-id=x",
+            "--aws-secret-access-key=x",
+            "--aws-bucket-name=x",
+            "--zip-password=x",
+        ])
+        .unwrap();
+    }
 }

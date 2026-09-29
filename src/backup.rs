@@ -12,11 +12,12 @@ use crate::{
 use std::{
     env,
     path::{Path, PathBuf},
+    pin::pin,
 };
 
 use anyhow::{Context, Result};
 use chrono::Utc;
-use futures_util::{Stream, StreamExt, pin_mut};
+use futures_util::{Stream, StreamExt};
 use tokio::{
     fs::{self, File},
     task::JoinSet,
@@ -155,9 +156,9 @@ async fn backup_immich_folder(
 ) -> Result<()> {
     let target_folder_path = CONFIG.upload_location.join(target_folder_name);
 
-    let batch_iterator =
-        iter_folder_batches(target_folder_path.clone(), CONFIG.max_batch_size_bytes).enumerate();
-    pin_mut!(batch_iterator);
+    let mut batch_iterator = pin!(
+        iter_folder_batches(target_folder_path.clone(), CONFIG.max_batch_size_bytes).enumerate()
+    );
 
     let mut upload_tasks = JoinSet::<Result<()>>::new();
 
@@ -252,8 +253,7 @@ fn iter_folder_batches(
         let mut batch_files: Vec<FileEntry> = vec![];
         let mut batch_size_bytes = 0_u64;
 
-        let dir_reader = read_dir_recursive(target_folder_path.clone());
-        pin_mut!(dir_reader);
+        let mut dir_reader = pin!(read_dir_recursive(target_folder_path.clone()));
 
         while let Some(file_entry_result) = dir_reader.next().await {
             let file_entry = file_entry_result.with_context(|| {

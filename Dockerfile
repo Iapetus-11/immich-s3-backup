@@ -1,4 +1,4 @@
-FROM rust:1.95.0-alpine3.23 AS build
+FROM rust:1.98.1-alpine3.24 AS build
 
 WORKDIR /immich_s3_backup
 
@@ -16,7 +16,7 @@ COPY src/ ./src/
 RUN cargo build --frozen --profile release
 
 
-FROM alpine:3.23 AS runner
+FROM alpine:3.24 AS runner
 
 WORKDIR /immich_s3_backup
 
