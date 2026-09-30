@@ -1,7 +1,11 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use clap::{Parser, builder::RangedU64ValueParser, value_parser};
+use clap::{
+    Parser,
+    builder::{NonEmptyStringValueParser, RangedU64ValueParser},
+    value_parser,
+};
 use dotenvy::dotenv;
 
 pub type Config = Arc<ConfigArgs>;
@@ -132,7 +136,12 @@ pub struct ConfigArgs {
     )]
     pub max_upload_retry_backoff: u64,
 
-    #[arg(long, env = "BACKUP_ZIP_PASSWORD")]
+    #[arg(
+        long,
+        env = "BACKUP_ZIP_PASSWORD",
+        hide_env_values = true,
+        value_parser = NonEmptyStringValueParser::new()
+    )]
     pub zip_password: String,
 }
 
@@ -167,5 +176,20 @@ mod tests {
     fn config_definition_is_valid() {
         ConfigArgs::command().debug_assert();
         get_test_config();
+    }
+
+    #[test]
+    fn empty_zip_password_is_rejected() {
+        let result = ConfigArgs::try_parse_from([
+            "immich_s3_backup",
+            "--db-password=password123",
+            "--upload-location=/uploads",
+            "--aws-access-key-id=access-key-id",
+            "--aws-secret-access-key=secret-access-key",
+            "--aws-bucket-name=bucket",
+            "--zip-password=",
+        ]);
+
+        assert!(result.is_err());
     }
 }

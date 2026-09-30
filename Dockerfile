@@ -22,6 +22,14 @@ WORKDIR /immich_s3_backup
 
 RUN apk add --no-cache postgresql-client
 
-COPY --from=build /immich_s3_backup/target/release/immich_s3_backup .
+RUN addgroup -S immich-backup \
+    && adduser -S -D -H -G immich-backup immich-backup
+
+RUN mkdir -p /history \
+    && chown immich-backup:immich-backup /immich_s3_backup /history
+
+COPY --from=build --chown=immich-backup:immich-backup /immich_s3_backup/target/release/immich_s3_backup .
+
+USER immich-backup
 
 ENTRYPOINT ["./immich_s3_backup"]
