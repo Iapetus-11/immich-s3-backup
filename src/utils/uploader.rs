@@ -12,7 +12,7 @@ pub struct S3Uploader {
     bucket_name: String,
     base_object_key: String,
     multipart_chunk_size: u64,
-    file_chunk_upload_concurrency: usize,
+    file_chunk_upload_concurrency: u64,
 }
 
 impl S3Uploader {
@@ -21,7 +21,7 @@ impl S3Uploader {
         bucket_name: String,
         base_object_key: String,
         multipart_chunk_size: u64,
-        file_chunk_upload_concurrency: usize,
+        file_chunk_upload_concurrency: u64,
     ) -> Self {
         Self {
             s3_client,
@@ -134,7 +134,7 @@ impl S3Uploader {
 
         let upload_part_futures = stream::iter(1..=part_count)
             .map(|part_idx| self.upload_file_multipart_part(file, key, upload_id, part_idx))
-            .buffered(self.file_chunk_upload_concurrency);
+            .buffered(self.file_chunk_upload_concurrency as usize);
 
         upload_part_futures.try_collect().await
     }

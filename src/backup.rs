@@ -26,7 +26,7 @@ use tokio::{
 use async_stream::try_stream;
 use tracing::{error, info};
 
-pub async fn backup_database_and_folders(config: Config) -> Result<()> {
+pub async fn backup_database_and_folders(config: &Config) -> Result<()> {
     let backup_name = Utc::now().format("%Y-%m-%d_%H-%M-%S").to_string();
     info!("Starting immich backup {backup_name}");
     let backup_folder = env::temp_dir().join("backups").join(&backup_name);
@@ -35,21 +35,21 @@ pub async fn backup_database_and_folders(config: Config) -> Result<()> {
         .await
         .with_context(|| format!("creating backup directory {}", backup_folder.display()))?;
 
-    let s3_client = initialize_s3_client();
+    let s3_client = initialize_s3_client(config);
     let s3_uploader = S3Uploader::new(
         s3_client,
-        CONFIG.aws_bucket_name.clone(),
+        config.aws_bucket_name.clone(),
         backup_name.clone(),
-        CONFIG.multipart_chunk_size,
-        CONFIG.file_chunk_upload_concurrency,
+        config.multipart_chunk_size,
+        config.file_chunk_upload_concurrency,
     );
 
     let backup_result: Result<()> = async {
-        dump_and_backup_immich_db(&backup_folder, &s3_uploader)
+        dump_and_backup_immich_db(config, &backup_folder, &s3_uploader)
             .await
             .context("backing up Immich database")?;
 
-        backup_all_immich_folders(&backup_folder, &s3_uploader)
+        backup_all_immich_folders(config, &backup_folder, &s3_uploader)
             .await
             .context("backing up Immich folders")?;
 
@@ -71,7 +71,11 @@ pub async fn backup_database_and_folders(config: Config) -> Result<()> {
     Ok(())
 }
 
-async fn dump_and_backup_immich_db(backup_folder: &Path, s3_uploader: &S3Uploader) -> Result<()> {
+async fn dump_and_backup_immich_db(
+    config: &Config,
+    backup_folder: &Path,
+    s3_uploader: &S3Uploader,
+) -> Result<()> {
     const DB_BACKUP_FILENAME: &str = "db-backup.sql";
 
     info!("Dumping Immich database");
@@ -81,7 +85,7 @@ async fn dump_and_backup_immich_db(backup_folder: &Path, s3_uploader: &S3Uploade
         .await
         .with_context(|| format!("creating dump output file {DB_BACKUP_FILENAME}"))?;
 
-    run_pg_dumpall(dump_file).await?;
+    run_pg_dumpall(config, dump_file).await?;
 
     let dump_file_entry = FileEntry::from_path(dump_file_path.clone())
         .await
@@ -98,7 +102,7 @@ async fn dump_and_backup_immich_db(backup_folder: &Path, s3_uploader: &S3Uploade
         file_entries: vec![dump_file_entry],
         output_file: dump_zip_file,
         compress: true,
-        password: &CONFIG.zip_password,
+        password: config.zip_password.clone(),
     })
     .await
     .context("zipping database dump")?;
@@ -134,27 +138,35 @@ async fn dump_and_backup_immich_db(backup_folder: &Path, s3_uploader: &S3Uploade
 }
 
 async fn backup_all_immich_folders(
+    config: &Config,
     backup_output_folder: &Path,
     s3_uploader: &S3Uploader,
 ) -> Result<()> {
     const FOLDERS_TO_BACKUP: &[&str] = &["library", "upload", "profile"];
 
     for target_folder_name in FOLDERS_TO_BACKUP {
-        backup_immich_folder(backup_output_folder, target_folder_name, s3_uploader).await?;
+        backup_immich_folder(
+            config,
+            backup_output_folder,
+            target_folder_name,
+            s3_uploader,
+        )
+        .await?;
     }
 
     Ok(())
 }
 
 async fn backup_immich_folder(
+    config: &Config,
     backup_output_folder: &Path,
     target_folder_name: &str,
     s3_uploader: &S3Uploader,
 ) -> Result<()> {
-    let target_folder_path = CONFIG.upload_location.join(target_folder_name);
+    let target_folder_path = config.upload_location.join(target_folder_name);
 
     let mut batch_iterator = pin!(
-        iter_folder_batches(target_folder_path.clone(), CONFIG.max_batch_size_bytes).enumerate()
+        iter_folder_batches(target_folder_path.clone(), config.max_batch_size_bytes).enumerate()
     );
 
     let mut upload_tasks = JoinSet::<Result<()>>::new();
@@ -168,7 +180,7 @@ async fn backup_immich_folder(
                 )
             })?;
 
-            if upload_tasks.len() >= CONFIG.file_upload_concurrency {
+            if upload_tasks.len() >= config.file_upload_concurrency {
                 info!(
                     "Waiting on previous upload to complete before packing {target_folder_name} batch {batch_idx}..."
                 );
@@ -179,6 +191,7 @@ async fn backup_immich_folder(
             }
 
             let batch_zip_file_entry = create_batch_zip(
+                config,
                 &target_folder_path,
                 target_folder_name,
                 batch_idx,
@@ -276,6 +289,7 @@ fn iter_folder_batches(
 }
 
 async fn create_batch_zip(
+    config: &Config,
     target_folder_path: &Path,
     target_folder_name: &str,
     batch_idx: usize,
@@ -295,11 +309,11 @@ async fn create_batch_zip(
         .with_context(|| format!("creating zip output file {}", output_path.display()))?;
 
     let zip_result = pack_zip(PackZipArgs {
-        source_dir: CONFIG.upload_location.clone(),
+        source_dir: config.upload_location.clone(),
         file_entries,
         output_file,
         compress: false,
-        password: &CONFIG.zip_password,
+        password: config.zip_password.to_string(),
     })
     .await
     .with_context(|| {

@@ -110,11 +110,11 @@ pub struct ConfigArgs {
         long,
         env = "BACKUP_FILE_CHUNK_UPLOAD_CONCURRENCY",
         default_value = "3",
-        value_parser = RangedU64ValueParser::<usize>::new().range(1..)
+        value_parser = value_parser!(u64).range(1..)
     )]
     /// This value can be multiplied by $BACKUP_FILE_UPLOAD_CONCURRENCY to determine the maximum
     /// amount of concurrent uploads.
-    pub file_chunk_upload_concurrency: usize,
+    pub file_chunk_upload_concurrency: u64,
 
     #[arg(
         long,
@@ -137,6 +137,7 @@ pub struct ConfigArgs {
 }
 
 pub fn load_config() -> Config {
+    let _ = dotenv();
     Arc::new(ConfigArgs::parse())
 }
 
@@ -152,7 +153,7 @@ pub fn get_test_config() -> Config {
             "--aws-bucket-name=bucket",
             "--zip-password=password123",
         ])
-        .unwrap(),
+        .expect("configuration should be valid"),
     )
 }
 
@@ -165,5 +166,6 @@ mod tests {
     #[test]
     fn config_definition_is_valid() {
         ConfigArgs::command().debug_assert();
+        get_test_config();
     }
 }

@@ -8,7 +8,6 @@ use crate::config::Config;
 pub struct BackupId(i64);
 
 pub struct BackupHistoryManager {
-    config: Config,
     db: Connection,
 }
 
@@ -16,7 +15,7 @@ impl BackupHistoryManager {
     pub fn new(config: Config) -> Result<Self> {
         let db =
             Connection::open(&config.history_file).context("opening backup history database")?;
-        let mut self_ = Self { config, db };
+        let mut self_ = Self { db };
 
         self_.ensure_table()?;
 
@@ -75,6 +74,7 @@ impl BackupHistoryManager {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
 
     use chrono::TimeZone;

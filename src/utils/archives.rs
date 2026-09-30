@@ -6,7 +6,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use tokio::task::spawn_blocking;
-use zip::{ZIP64_BYTES_THR, ZipWriter, write::SimpleFileOptions};
+use zip::{ZIP64_BYTES_THR, ZipWriter, write::FileOptions};
 
 use crate::utils::dir_reader::FileEntry;
 
@@ -15,7 +15,7 @@ pub struct PackZipArgs<F> {
     pub file_entries: Vec<FileEntry>,
     pub output_file: F,
     pub compress: bool,
-    pub password: &'static str,
+    pub password: String,
 }
 
 pub async fn pack_zip(
@@ -50,7 +50,7 @@ fn blocking_pack_zip(
         password,
     }: PackZipArgs<File>,
 ) -> Result<()> {
-    let zip_options = get_file_options(compress, password);
+    let zip_options = get_file_options(compress, password.as_str());
 
     let mut zip_writer = ZipWriter::new(&mut output_file);
 
@@ -64,8 +64,8 @@ fn blocking_pack_zip(
     Ok(())
 }
 
-fn get_file_options(compress: bool, password: &'static str) -> SimpleFileOptions {
-    let mut options = SimpleFileOptions::default();
+fn get_file_options(compress: bool, password: &str) -> FileOptions<'_, ()> {
+    let mut options = FileOptions::default();
 
     if compress {
         options = options
@@ -84,7 +84,7 @@ fn write_file_to_zip<ZW: io::Write + io::Seek>(
     source_dir: &Path,
     file_entry: &FileEntry,
     zip_writer: &mut ZipWriter<ZW>,
-    mut options: SimpleFileOptions,
+    mut options: FileOptions<'_, ()>,
 ) -> Result<()> {
     options = options.large_file(file_entry.metadata.len() >= ZIP64_BYTES_THR);
 

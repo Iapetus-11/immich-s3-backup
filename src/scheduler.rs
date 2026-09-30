@@ -46,14 +46,15 @@ impl BackupScheduler {
     }
 
     fn get_duration_until_next_backup(&self) -> Result<Duration> {
-        let mut history = BackupHistoryManager::new().context("opening backup history manager")?;
+        let mut history = BackupHistoryManager::new(self.config.clone())
+            .context("opening backup history manager")?;
 
         let last_backup_at = history
             .get_last_successful_entry()
             .context("getting last successful backup")?;
 
         let Some(last_backup_at) = last_backup_at else {
-            return Ok(Duration::ZERO);
+            return Ok(Duration::from_secs(5));
         };
 
         let now = Utc::now();
@@ -66,7 +67,7 @@ impl BackupScheduler {
         let duration_since_last_backup = (now - last_backup_at).to_std().unwrap();
 
         if duration_since_last_backup >= duration_between_backups {
-            return Ok(Duration::from_secs(1));
+            return Ok(Duration::from_secs(5));
         }
 
         Ok(duration_between_backups - duration_since_last_backup)
