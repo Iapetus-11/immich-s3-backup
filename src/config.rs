@@ -1,10 +1,13 @@
-use std::{path::PathBuf, sync::LazyLock};
+use std::path::PathBuf;
+use std::sync::Arc;
 
 use clap::{Parser, builder::RangedU64ValueParser, value_parser};
 use dotenvy::dotenv;
 
+pub type Config = Arc<ConfigArgs>;
+
 #[derive(Debug, clap::Parser)]
-pub struct Config {
+pub struct ConfigArgs {
     // CLI ---------------------------------------------------------------------
     #[arg(long, default_value = "false")]
     pub forever: bool,
@@ -134,7 +137,23 @@ pub struct Config {
 }
 
 pub fn load_config() -> Config {
-    Config::parse()
+    Arc::new(ConfigArgs::parse())
+}
+
+#[cfg(test)]
+pub fn get_test_config() -> Config {
+    Arc::new(
+        ConfigArgs::try_parse_from([
+            "immich_s3_backup",
+            "--db-password=password123",
+            "--upload-location=/uploads",
+            "--aws-access-key-id=access-key-id",
+            "--aws-secret-access-key=secret-access-key",
+            "--aws-bucket-name=bucket",
+            "--zip-password=password123",
+        ])
+        .unwrap(),
+    )
 }
 
 #[cfg(test)]
@@ -145,20 +164,6 @@ mod tests {
 
     #[test]
     fn config_definition_is_valid() {
-        Config::command().debug_assert();
-    }
-
-    #[test]
-    fn config_parses_with_defaults() {
-        Config::try_parse_from([
-            "immich_s3_backup",
-            "--db-password=x",
-            "--upload-location=/tmp",
-            "--aws-access-key-id=x",
-            "--aws-secret-access-key=x",
-            "--aws-bucket-name=x",
-            "--zip-password=x",
-        ])
-        .unwrap();
+        ConfigArgs::command().debug_assert();
     }
 }

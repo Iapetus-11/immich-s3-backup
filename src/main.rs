@@ -2,7 +2,7 @@ use std::process;
 
 use tracing::{Level, error};
 
-use crate::config::{CONFIG, load_config};
+use crate::config::load_config;
 
 mod backup;
 mod config;
@@ -26,8 +26,11 @@ async fn main() {
     let config = load_config();
 
     if config.forever {
-        scheduler::BackupScheduler.run_forever().await;
-    } else if let Err(error) = runner::run().await {
+        scheduler::BackupScheduler::new(config).run_forever().await;
+        return;
+    }
+
+    if let Err(error) = runner::run(config).await {
         error!("Backup failed: {error:?}");
         process::exit(1);
     }

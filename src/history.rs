@@ -2,20 +2,21 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use rusqlite::Connection;
 
-use crate::config::CONFIG;
+use crate::config::Config;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct BackupId(i64);
 
 pub struct BackupHistoryManager {
+    config: Config,
     db: Connection,
 }
 
 impl BackupHistoryManager {
-    pub fn new() -> Result<Self> {
+    pub fn new(config: Config) -> Result<Self> {
         let db =
-            Connection::open(&CONFIG.history_file).context("opening backup history database")?;
-        let mut self_ = Self { db };
+            Connection::open(&config.history_file).context("opening backup history database")?;
+        let mut self_ = Self { config, db };
 
         self_.ensure_table()?;
 

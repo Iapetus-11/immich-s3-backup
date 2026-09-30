@@ -2,14 +2,14 @@ use anyhow::{Context, Result, bail};
 use tokio::fs::File;
 use tokio::process::Command;
 
-use crate::config::CONFIG;
+use crate::config::Config;
 
-pub async fn run_pg_dumpall(dump_file: File) -> Result<()> {
+pub async fn run_pg_dumpall(config: &Config, dump_file: File) -> Result<()> {
     let mut pg_dumpall_cmd = {
         let mut cmd = Command::new("pg_dumpall");
         cmd.arg("--clean");
         cmd.arg("--if-exists");
-        apply_connection_options(&mut cmd);
+        apply_connection_options(config, &mut cmd);
         cmd
     };
 
@@ -26,20 +26,20 @@ pub async fn run_pg_dumpall(dump_file: File) -> Result<()> {
     Ok(())
 }
 
-fn apply_connection_options(cmd: &mut Command) {
-    if let Some(db_url) = &CONFIG.db_url {
+fn apply_connection_options(config: &Config, cmd: &mut Command) {
+    if let Some(db_url) = &config.db_url {
         cmd.arg(format!("--dbname={db_url}"));
     } else {
-        cmd.arg(format!("--host={}", CONFIG.db_hostname))
-            .arg(format!("--port={}", CONFIG.db_port))
-            .arg(format!("--username={}", CONFIG.db_username))
-            .arg(format!("--database={}", CONFIG.db_database_name));
-        if let Some(db_password) = &CONFIG.db_password {
+        cmd.arg(format!("--host={}", config.db_hostname))
+            .arg(format!("--port={}", config.db_port))
+            .arg(format!("--username={}", config.db_username))
+            .arg(format!("--database={}", config.db_database_name));
+        if let Some(db_password) = &config.db_password {
             cmd.env("PGPASSWORD", db_password);
         }
     }
 
-    if let Some(db_ssl_mode) = &CONFIG.db_ssl_mode {
+    if let Some(db_ssl_mode) = &config.db_ssl_mode {
         cmd.env("PGSSLMODE", db_ssl_mode);
     }
 }
