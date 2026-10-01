@@ -1,5 +1,5 @@
 [package]
-name = "immich_s3_backup"
+name = "immich-s3-backup"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.91"

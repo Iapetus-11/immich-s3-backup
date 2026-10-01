@@ -26,10 +26,33 @@ use tokio::{
 use async_stream::try_stream;
 use tracing::{error, info};
 
+fn backup_root() -> PathBuf {
+    env::temp_dir().join("immich-backups")
+}
+
+pub async fn cleanup_stale_backup_folders() -> Result<()> {
+    let backup_root = backup_root();
+
+    match fs::remove_dir_all(&backup_root).await {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!(
+                    "removing stale temporary backup directories from {}",
+                    backup_root.display()
+                )
+            });
+        }
+    }
+
+    Ok(())
+}
+
 pub async fn backup_database_and_folders(config: &Config) -> Result<()> {
     let backup_name = Utc::now().format("%Y-%m-%d_%H-%M-%S").to_string();
     info!("Starting immich backup {backup_name}");
-    let backup_folder = env::temp_dir().join("backups").join(&backup_name);
+    let backup_folder = backup_root().join(&backup_name);
 
     fs::create_dir_all(&backup_folder)
         .await

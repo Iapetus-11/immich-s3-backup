@@ -2,7 +2,7 @@
 
 Backs up an Immich instance (database dump + upload library) to Cloudflare R2 or any S3-compatible bucket, as password-protected zips.
 
-It reads the same `DB_*` and `UPLOAD_LOCATION` variables as Immich, so it drops into an existing Immich `docker-compose` setup with no changes to Immich's own configuration.
+It reads the same `DB_*` and `UPLOAD_LOCATION` variables as Immich, so it drops into an existing Immich Docker Compose setup with no changes to Immich's own configuration.
 
 ## Setup
 
@@ -11,8 +11,8 @@ It reads the same `DB_*` and `UPLOAD_LOCATION` variables as Immich, so it drops 
 Paste this under `services:`:
 
 ```yaml
-  immich-backup:
-    container_name: immich_backup
+  immich-s3-backup:
+    container_name: immich-s3-backup
     image: ghcr.io/iapetus-11/immich-s3-backup:latest
     command: ["--forever"]
     env_file:
@@ -53,5 +53,5 @@ BACKUP_INTERVAL_DAYS=7
 ### 3. Start it
 
 ```sh
-docker compose up -d immich-backup
+docker compose up -d immich-s3-backup
 ```

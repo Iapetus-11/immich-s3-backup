@@ -1,4 +1,4 @@
-use std::process::ExitCode;
+use std::{io::IsTerminal, process::ExitCode};
 
 use tracing::{Level, error};
 
@@ -16,7 +16,7 @@ mod utils;
 #[tokio::main]
 async fn main() -> ExitCode {
     if let Err(error) = tracing_subscriber::FmtSubscriber::builder()
-        .with_ansi(true)
+        .with_ansi(std::io::stdout().is_terminal())
         .with_max_level(Level::INFO)
         .try_init()
     {
@@ -25,6 +25,10 @@ async fn main() -> ExitCode {
     }
 
     let config = load_config();
+
+    if let Err(error) = backup::cleanup_stale_backup_folders().await {
+        error!("Failed to clean up stale backup files: {error:#}");
+    }
 
     if config.forever {
         scheduler::BackupScheduler::new(config).run_forever().await;

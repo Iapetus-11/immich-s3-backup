@@ -12,6 +12,7 @@ use tracing::error;
 pub type Config = Arc<ConfigArgs>;
 
 #[derive(Debug, clap::Parser)]
+#[command(name = "immich-s3-backup")]
 pub struct ConfigArgs {
     // CLI ---------------------------------------------------------------------
     #[arg(long)]
@@ -164,7 +165,7 @@ pub fn load_config() -> Config {
 pub fn get_test_config() -> Config {
     Arc::new(
         ConfigArgs::try_parse_from([
-            "immich_s3_backup",
+            "immich-s3-backup",
             "--db-password=password123",
             "--upload-location=/uploads",
             "--aws-access-key-id=access-key-id",
@@ -191,7 +192,7 @@ mod tests {
     #[test]
     fn empty_archive_password_is_rejected() {
         let result = ConfigArgs::try_parse_from([
-            "immich_s3_backup",
+            "immich-s3-backup",
             "--db-password=password123",
             "--upload-location=/uploads",
             "--aws-access-key-id=access-key-id",
