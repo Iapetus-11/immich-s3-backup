@@ -272,14 +272,14 @@ fn iter_folder_batches(
             let file_size = file_entry.metadata.len();
 
             if !batch_files.is_empty()
-                && batch_size_bytes.saturating_add(file_size) >= batch_max_size_bytes
+                && batch_size_bytes + file_size >= batch_max_size_bytes
             {
                 yield std::mem::take(&mut batch_files);
                 batch_size_bytes = 0;
             }
 
             batch_files.push(file_entry);
-            batch_size_bytes = batch_size_bytes.saturating_add(file_size);
+            batch_size_bytes += file_size;
         }
 
         if !batch_files.is_empty() {

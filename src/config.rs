@@ -18,7 +18,7 @@ pub struct ConfigArgs {
 
     // Immich ------------------------------------------------------------------
     // TODO: Support Immich's `_FILE` secret variants (e.g. DB_PASSWORD_FILE, DB_URL_FILE).
-    /// Overrides the individual DB_* connection values when set.
+    // Overrides the individual DB_* connection values when set.
     #[arg(long, env = "DB_URL", hide_env_values = true)]
     pub db_url: Option<String>,
 
@@ -120,7 +120,6 @@ pub struct ConfigArgs {
     /// amount of concurrent uploads.
     pub upload_chunk_concurrency: u64,
 
-    /// Maximum time allowed for the database dump to complete.
     #[arg(
         long,
         env = "BACKUP_DATABASE_DUMP_TIMEOUT_SECONDS",
@@ -129,23 +128,17 @@ pub struct ConfigArgs {
     )]
     pub database_dump_timeout_seconds: u64,
 
-    /// Maximum time for one upload API request, including retries and backoff.
     #[arg(
         long,
-        env = "BACKUP_UPLOAD_REQUEST_TIMEOUT_SECONDS",
-        default_value = "3600",
+        env = "BACKUP_UPLOAD_TIMEOUT_SECONDS",
+        default_value = "300",
         value_parser = value_parser!(u64).range(1..)
     )]
-    pub upload_request_timeout_seconds: u64,
+    /// Maximum time for one upload API request attempt.
+    pub upload_timeout_seconds: u64,
 
-    /// Maximum attempts for one upload API request, including the initial attempt.
-    #[arg(
-        long,
-        env = "BACKUP_UPLOAD_MAX_ATTEMPTS",
-        default_value = "10",
-        value_parser = value_parser!(u32).range(1..)
-    )]
-    pub upload_max_attempts: u32,
+    #[arg(long, env = "BACKUP_UPLOAD_MAX_RETRIES", default_value = "10")]
+    pub upload_max_retries: u32,
 
     #[arg(
         long,

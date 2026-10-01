@@ -147,7 +147,7 @@ impl S3Uploader {
         part_idx: i32,
     ) -> Result<CompletedPart> {
         let offset = (part_idx as u64 - 1) * self.chunk_size_bytes;
-        let remaining_bytes = file.metadata.len().saturating_sub(offset);
+        let remaining_bytes = file.metadata.len() - offset;
         let byte_stream_length = Length::Exact(self.chunk_size_bytes.min(remaining_bytes));
 
         let byte_stream = ByteStream::read_from()

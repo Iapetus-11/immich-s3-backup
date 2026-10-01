@@ -5,21 +5,18 @@ use aws_sdk_s3::config::{Credentials, Region, retry::RetryConfig, timeout::Timeo
 use crate::config::Config;
 
 pub fn initialize_s3_client(config: &Config) -> aws_sdk_s3::Client {
-    const CONNECT_TIMEOUT_SECONDS: u64 = 30;
-    const ATTEMPT_TIMEOUT_SECONDS: u64 = 10 * 60;
+    const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+    const MAX_RETRY_BACKOFF: Duration = Duration::from_secs(20);
 
-    let request_timeout_seconds = config.upload_request_timeout_seconds;
+    let attempt_timeout = Duration::from_secs(config.upload_timeout_seconds);
     let timeout_config = TimeoutConfig::builder()
-        .connect_timeout(Duration::from_secs(
-            request_timeout_seconds.min(CONNECT_TIMEOUT_SECONDS),
-        ))
-        .operation_attempt_timeout(Duration::from_secs(
-            request_timeout_seconds.min(ATTEMPT_TIMEOUT_SECONDS),
-        ))
-        .operation_timeout(Duration::from_secs(request_timeout_seconds))
+        .connect_timeout(CONNECT_TIMEOUT.min(attempt_timeout))
+        .operation_attempt_timeout(attempt_timeout)
         .build();
 
-    let retry_config = RetryConfig::standard().with_max_attempts(config.upload_max_attempts);
+    let retry_config = RetryConfig::standard()
+        .with_max_attempts(config.upload_max_retries + 1)
+        .with_max_backoff(MAX_RETRY_BACKOFF);
 
     let mut s3_config_builder = aws_sdk_s3::Config::builder()
         .behavior_version_latest()
