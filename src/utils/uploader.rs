@@ -11,8 +11,8 @@ pub struct S3Uploader {
     s3_client: aws_sdk_s3::Client,
     bucket_name: String,
     base_object_key: String,
-    multipart_chunk_size: u64,
-    file_chunk_upload_concurrency: u64,
+    chunk_size_bytes: u64,
+    chunk_concurrency: u64,
 }
 
 impl S3Uploader {
@@ -20,15 +20,15 @@ impl S3Uploader {
         s3_client: aws_sdk_s3::Client,
         bucket_name: String,
         base_object_key: String,
-        multipart_chunk_size: u64,
-        file_chunk_upload_concurrency: u64,
+        chunk_size_bytes: u64,
+        chunk_concurrency: u64,
     ) -> Self {
         Self {
             s3_client,
             bucket_name,
             base_object_key,
-            multipart_chunk_size,
-            file_chunk_upload_concurrency,
+            chunk_size_bytes,
+            chunk_concurrency,
         }
     }
 
@@ -122,7 +122,7 @@ impl S3Uploader {
     ) -> Result<Vec<CompletedPart>> {
         const MAX_PART_COUNT: i32 = 10_000;
 
-        let part_count = i32::try_from(file.metadata.len().div_ceil(self.multipart_chunk_size))?;
+        let part_count = i32::try_from(file.metadata.len().div_ceil(self.chunk_size_bytes))?;
         if part_count < 1 {
             bail!("File {file} is empty");
         }
@@ -134,7 +134,7 @@ impl S3Uploader {
 
         let upload_part_futures = stream::iter(1..=part_count)
             .map(|part_idx| self.upload_file_multipart_part(file, key, upload_id, part_idx))
-            .buffered(self.file_chunk_upload_concurrency as usize);
+            .buffered(self.chunk_concurrency as usize);
 
         upload_part_futures.try_collect().await
     }
@@ -146,9 +146,9 @@ impl S3Uploader {
         upload_id: &str,
         part_idx: i32,
     ) -> Result<CompletedPart> {
-        let offset = (part_idx as u64 - 1) * self.multipart_chunk_size;
+        let offset = (part_idx as u64 - 1) * self.chunk_size_bytes;
         let remaining_bytes = file.metadata.len().saturating_sub(offset);
-        let byte_stream_length = Length::Exact(self.multipart_chunk_size.min(remaining_bytes));
+        let byte_stream_length = Length::Exact(self.chunk_size_bytes.min(remaining_bytes));
 
         let byte_stream = ByteStream::read_from()
             .path(&file.path)

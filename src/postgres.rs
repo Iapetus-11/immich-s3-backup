@@ -1,6 +1,7 @@
+use std::time::Duration;
+
 use anyhow::{Context, Result, bail};
-use tokio::fs::File;
-use tokio::process::Command;
+use tokio::{fs::File, process::Command, time};
 
 use crate::config::Config;
 
@@ -9,15 +10,24 @@ pub async fn run_pg_dumpall(config: &Config, dump_file: File) -> Result<()> {
         let mut cmd = Command::new("pg_dumpall");
         cmd.arg("--clean");
         cmd.arg("--if-exists");
+        cmd.kill_on_drop(true);
         apply_connection_options(config, &mut cmd);
         cmd
     };
 
-    let pg_dumpall_status = pg_dumpall_cmd
-        .stdout(dump_file.into_std().await)
-        .status()
-        .await
-        .context("running pg_dumpall command")?;
+    let dump_timeout = Duration::from_secs(config.database_dump_timeout_seconds);
+    let pg_dumpall_status = time::timeout(
+        dump_timeout,
+        pg_dumpall_cmd.stdout(dump_file.into_std().await).status(),
+    )
+    .await
+    .with_context(|| {
+        format!(
+            "pg_dumpall timed out after {} seconds",
+            config.database_dump_timeout_seconds
+        )
+    })?
+    .context("running pg_dumpall command")?;
 
     if !pg_dumpall_status.success() {
         bail!("pg_dumpall failed with status {pg_dumpall_status}");

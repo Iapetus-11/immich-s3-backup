@@ -13,7 +13,7 @@ pub type Config = Arc<ConfigArgs>;
 #[derive(Debug, clap::Parser)]
 pub struct ConfigArgs {
     // CLI ---------------------------------------------------------------------
-    #[arg(long, default_value = "false")]
+    #[arg(long)]
     pub forever: bool,
 
     // Immich ------------------------------------------------------------------
@@ -64,16 +64,16 @@ pub struct ConfigArgs {
     #[arg(long, env = "AWS_ENDPOINT_URL")]
     pub aws_endpoint_url: Option<String>,
 
-    #[arg(long, env = "AWS_BUCKET_NAME")]
-    pub aws_bucket_name: String,
-
     // Backup config -----------------------------------------------------------
+    #[arg(long, env = "BACKUP_UPLOAD_BUCKET_NAME")]
+    pub upload_bucket_name: String,
+
     #[arg(
         long,
-        env = "BACKUP_HISTORY_FILE",
+        env = "BACKUP_HISTORY_FILE_PATH",
         default_value = "./backup-history.sqlite"
     )]
-    pub history_file: PathBuf,
+    pub history_file_path: PathBuf,
 
     #[arg(
         long,
@@ -85,64 +85,75 @@ pub struct ConfigArgs {
 
     #[arg(
         long,
-        env = "BACKUP_BATCH_SIZE_BYTES",
+        env = "BACKUP_BATCH_MAX_SIZE_BYTES",
         default_value = "10737418240", // 10 GiB
         value_parser = value_parser!(u64).range(5 * 1024 * 1024..)
     )]
-    pub max_batch_size_bytes: u64,
+    pub batch_max_size_bytes: u64,
 
     #[arg(
         long,
-        env = "BACKUP_MULTIPART_CHUNK_SIZE",
+        env = "BACKUP_UPLOAD_CHUNK_SIZE_BYTES",
         default_value = "67108864", // 64 MiB
         value_parser = value_parser!(u64).range(5 * 1024 * 1024..=5 * 1024 * 1024 * 1024)
     )]
     /// Exceeding 2.5 GiB may cause uploads to fail.
-    pub multipart_chunk_size: u64,
+    pub upload_chunk_size_bytes: u64,
 
     #[arg(
         long,
-        env = "BACKUP_FILE_UPLOAD_CONCURRENCY",
+        env = "BACKUP_UPLOAD_FILE_CONCURRENCY",
         default_value = "1",
         value_parser = RangedU64ValueParser::<usize>::new().range(1..)
     )]
     /// Increasing this number increases the free space required, because more batch zips will be
-    /// stored on disk for upload, so you may want to decrease $BACKUP_BATCH_SIZE_BYTES.
-    pub file_upload_concurrency: usize,
+    /// stored on disk for upload, so you may want to decrease $BACKUP_BATCH_MAX_SIZE_BYTES.
+    pub upload_file_concurrency: usize,
 
     #[arg(
         long,
-        env = "BACKUP_FILE_CHUNK_UPLOAD_CONCURRENCY",
+        env = "BACKUP_UPLOAD_CHUNK_CONCURRENCY",
         default_value = "3",
         value_parser = value_parser!(u64).range(1..)
     )]
-    /// This value can be multiplied by $BACKUP_FILE_UPLOAD_CONCURRENCY to determine the maximum
+    /// This value can be multiplied by $BACKUP_UPLOAD_FILE_CONCURRENCY to determine the maximum
     /// amount of concurrent uploads.
-    pub file_chunk_upload_concurrency: u64,
+    pub upload_chunk_concurrency: u64,
 
+    /// Maximum time allowed for the database dump to complete.
     #[arg(
         long,
-        env = "BACKUP_MAX_UPLOAD_RETRIES",
+        env = "BACKUP_DATABASE_DUMP_TIMEOUT_SECONDS",
+        default_value = "1200",
+        value_parser = value_parser!(u64).range(1..)
+    )]
+    pub database_dump_timeout_seconds: u64,
+
+    /// Maximum time for one upload API request, including retries and backoff.
+    #[arg(
+        long,
+        env = "BACKUP_UPLOAD_REQUEST_TIMEOUT_SECONDS",
+        default_value = "3600",
+        value_parser = value_parser!(u64).range(1..)
+    )]
+    pub upload_request_timeout_seconds: u64,
+
+    /// Maximum attempts for one upload API request, including the initial attempt.
+    #[arg(
+        long,
+        env = "BACKUP_UPLOAD_MAX_ATTEMPTS",
         default_value = "10",
         value_parser = value_parser!(u32).range(1..)
     )]
-    pub max_upload_retries: u32,
+    pub upload_max_attempts: u32,
 
     #[arg(
         long,
-        env = "BACKUP_MAX_UPLOAD_RETRY_BACKOFF",
-        default_value = "30",
-        value_parser = value_parser!(u64).range(1..)
-    )]
-    pub max_upload_retry_backoff: u64,
-
-    #[arg(
-        long,
-        env = "BACKUP_ZIP_PASSWORD",
+        env = "BACKUP_ARCHIVE_PASSWORD",
         hide_env_values = true,
         value_parser = NonEmptyStringValueParser::new()
     )]
-    pub zip_password: String,
+    pub archive_password: String,
 }
 
 pub fn load_config() -> Config {
@@ -159,8 +170,8 @@ pub fn get_test_config() -> Config {
             "--upload-location=/uploads",
             "--aws-access-key-id=access-key-id",
             "--aws-secret-access-key=secret-access-key",
-            "--aws-bucket-name=bucket",
-            "--zip-password=password123",
+            "--upload-bucket-name=bucket",
+            "--archive-password=password123",
         ])
         .expect("configuration should be valid"),
     )
@@ -179,15 +190,15 @@ mod tests {
     }
 
     #[test]
-    fn empty_zip_password_is_rejected() {
+    fn empty_archive_password_is_rejected() {
         let result = ConfigArgs::try_parse_from([
             "immich_s3_backup",
             "--db-password=password123",
             "--upload-location=/uploads",
             "--aws-access-key-id=access-key-id",
             "--aws-secret-access-key=secret-access-key",
-            "--aws-bucket-name=bucket",
-            "--zip-password=",
+            "--upload-bucket-name=bucket",
+            "--archive-password=",
         ]);
 
         assert!(result.is_err());

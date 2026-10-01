@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 
 use crate::config::Config;
 
@@ -13,8 +13,8 @@ pub struct BackupHistoryManager {
 
 impl BackupHistoryManager {
     pub fn new(config: Config) -> Result<Self> {
-        let db =
-            Connection::open(&config.history_file).context("opening backup history database")?;
+        let db = Connection::open(&config.history_file_path)
+            .context("opening backup history database")?;
         let mut self_ = Self { db };
 
         self_.ensure_table()?;
@@ -57,18 +57,9 @@ impl BackupHistoryManager {
             .prepare(include_str!("sql/get_last_successful_history_entry.sql"))
             .context("preparing last successful backup query")?;
 
-        let last_entry = stmt
-            .query_map((), |row| row.get(0))
-            .context("querying last successful backup")?
-            .next();
-
-        let Some(last_entry) = last_entry else {
-            return Ok(None);
-        };
-
-        Ok(Some(
-            last_entry.context("reading last successful backup timestamp")?,
-        ))
+        stmt.query_row((), |row| row.get(0))
+            .optional()
+            .context("querying last successful backup")
     }
 }
 

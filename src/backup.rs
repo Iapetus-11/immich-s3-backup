@@ -38,10 +38,10 @@ pub async fn backup_database_and_folders(config: &Config) -> Result<()> {
     let s3_client = initialize_s3_client(config);
     let s3_uploader = S3Uploader::new(
         s3_client,
-        config.aws_bucket_name.clone(),
+        config.upload_bucket_name.clone(),
         backup_name.clone(),
-        config.multipart_chunk_size,
-        config.file_chunk_upload_concurrency,
+        config.upload_chunk_size_bytes,
+        config.upload_chunk_concurrency,
     );
 
     let backup_result: Result<()> = async {
@@ -102,7 +102,7 @@ async fn dump_and_backup_immich_db(
         file_entries: vec![dump_file_entry],
         output_file: dump_zip_file,
         compress: true,
-        password: config.zip_password.clone(),
+        password: config.archive_password.clone(),
     })
     .await
     .context("zipping database dump")?;
@@ -166,7 +166,7 @@ async fn backup_immich_folder(
     let target_folder_path = config.upload_location.join(target_folder_name);
 
     let mut batch_iterator = pin!(
-        iter_folder_batches(target_folder_path.clone(), config.max_batch_size_bytes).enumerate()
+        iter_folder_batches(target_folder_path.clone(), config.batch_max_size_bytes).enumerate()
     );
 
     let mut upload_tasks = JoinSet::<Result<()>>::new();
@@ -180,7 +180,7 @@ async fn backup_immich_folder(
                 )
             })?;
 
-            if upload_tasks.len() >= config.file_upload_concurrency {
+            if upload_tasks.len() >= config.upload_file_concurrency {
                 info!(
                     "Waiting on previous upload to complete before packing {target_folder_name} batch {batch_idx}..."
                 );
@@ -257,7 +257,7 @@ fn spawn_batch_upload_task(
 
 fn iter_folder_batches(
     target_folder_path: PathBuf,
-    max_batch_size_bytes: u64,
+    batch_max_size_bytes: u64,
 ) -> impl Stream<Item = Result<Vec<FileEntry>>> {
     try_stream! {
         let mut batch_files: Vec<FileEntry> = vec![];
@@ -272,7 +272,7 @@ fn iter_folder_batches(
             let file_size = file_entry.metadata.len();
 
             if !batch_files.is_empty()
-                && batch_size_bytes.saturating_add(file_size) >= max_batch_size_bytes
+                && batch_size_bytes.saturating_add(file_size) >= batch_max_size_bytes
             {
                 yield std::mem::take(&mut batch_files);
                 batch_size_bytes = 0;
@@ -313,7 +313,7 @@ async fn create_batch_zip(
         file_entries,
         output_file,
         compress: false,
-        password: config.zip_password.to_string(),
+        password: config.archive_password.to_string(),
     })
     .await
     .with_context(|| {

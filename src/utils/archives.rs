@@ -88,16 +88,12 @@ fn write_file_to_zip<ZW: io::Write + io::Seek>(
 ) -> Result<()> {
     options = options.large_file(file_entry.metadata.len() >= ZIP64_BYTES_THR);
 
-    let relative_entry_path = file_entry
-        .path
-        .strip_prefix(source_dir)
-        .ok()
-        .with_context(|| {
-            format!(
-                "getting {file_entry} path relative to {}",
-                source_dir.display()
-            )
-        })?;
+    let relative_entry_path = file_entry.path.strip_prefix(source_dir).with_context(|| {
+        format!(
+            "getting {file_entry} path relative to {}",
+            source_dir.display()
+        )
+    })?;
 
     zip_writer
         .start_file_from_path(relative_entry_path, options)

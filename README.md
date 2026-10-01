@@ -20,7 +20,7 @@ Paste this under `services:`:
     environment:
       # Paths inside this container, not on the host
       UPLOAD_LOCATION: /data
-      BACKUP_HISTORY_FILE: /history/backup-history.sqlite
+      BACKUP_HISTORY_FILE_PATH: /history/backup-history.sqlite
     volumes:
       - ${UPLOAD_LOCATION}:/data:ro
       - backup-history:/history
@@ -43,9 +43,9 @@ AWS_ENDPOINT_URL=https://<cloudflare-account-id>.r2.cloudflarestorage.com  # Omi
 AWS_ACCESS_KEY_ID=
 AWS_SECRET_ACCESS_KEY=
 AWS_REGION=auto
-AWS_BUCKET_NAME=my-immich-backup
 
-BACKUP_ZIP_PASSWORD=
+BACKUP_UPLOAD_BUCKET_NAME=my-immich-backup
+BACKUP_ARCHIVE_PASSWORD=
 BACKUP_INTERVAL_DAYS=7
 ```
 
