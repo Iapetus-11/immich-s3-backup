@@ -4,9 +4,9 @@ use crate::{
     s3_client::initialize_s3_client,
     utils::{
         archives::{PackZipArgs, pack_zip},
-        dir_reader::FileEntry,
+        dir_reader::{FileEntry, read_dir_recursive},
+        uploader::S3Uploader,
     },
-    utils::{dir_reader::read_dir_recursive, uploader::S3Uploader},
 };
 
 use std::{

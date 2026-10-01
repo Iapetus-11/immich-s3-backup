@@ -21,13 +21,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
 
       - name: Prepare release
         id: release
         env:
-          BEFORE_SHA: ${{ github.event.before }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -35,23 +32,13 @@ jobs:
           version="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')"
           image_name="ghcr.io/${GITHUB_REPOSITORY,,}"
 
-          previous_version=""
-          if [[ -n "${BEFORE_SHA}" && ! "${BEFORE_SHA}" =~ ^0+$ ]] && git cat-file -e "${BEFORE_SHA}:Cargo.toml" 2>/dev/null; then
-            previous_version="$(git show "${BEFORE_SHA}:Cargo.toml" | python3 -c 'import sys, tomllib; print(tomllib.loads(sys.stdin.buffer.read().decode())["package"]["version"])')"
-          fi
-
-          publish=false
-          if [[ "${version}" != "${previous_version}" ]]; then
-            publish=true
-          fi
-
+          publish=true
           if gh release view "v${version}" >/dev/null 2>&1; then
             echo "Release v${version} already exists; skipping."
             publish=false
           fi
 
           echo "Version: ${version}"
-          echo "Previous version: ${previous_version:-<none>}"
           echo "Publish: ${publish}"
 
           echo "version=${version}" >> "$GITHUB_OUTPUT"
@@ -80,6 +67,8 @@ jobs:
           tags: |
             ${{ steps.release.outputs.image_name }}:${{ steps.release.outputs.version }}
             ${{ steps.release.outputs.image_name }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Create GitHub release
         if: steps.release.outputs.publish == 'true'

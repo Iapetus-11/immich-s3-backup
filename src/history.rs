@@ -2,9 +2,9 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, OptionalExtension};
 
-use crate::config::Config;
+use std::path::Path;
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct BackupId(i64);
 
 pub struct BackupHistoryManager {
@@ -12,24 +12,23 @@ pub struct BackupHistoryManager {
 }
 
 impl BackupHistoryManager {
-    pub fn new(config: Config) -> Result<Self> {
-        let db = Connection::open(&config.history_file_path)
-            .context("opening backup history database")?;
-        let mut self_ = Self { db };
+    pub fn new(history_file_path: &Path) -> Result<Self> {
+        let db = Connection::open(history_file_path).context("opening backup history database")?;
+        let self_ = Self { db };
 
         self_.ensure_table()?;
 
         Ok(self_)
     }
 
-    fn ensure_table(&mut self) -> Result<()> {
+    fn ensure_table(&self) -> Result<()> {
         self.db
             .execute(include_str!("sql/create_history_table.sql"), ())
             .context("creating backup history table")?;
         Ok(())
     }
 
-    pub fn start_entry(&mut self) -> Result<BackupId> {
+    pub fn start_entry(&self) -> Result<BackupId> {
         let now = Utc::now();
         let id = BackupId(now.timestamp_millis());
 
@@ -40,7 +39,7 @@ impl BackupHistoryManager {
         Ok(id)
     }
 
-    pub fn finish_entry(&mut self, id: &BackupId, failed: bool) -> Result<()> {
+    pub fn finish_entry(&self, id: BackupId, failed: bool) -> Result<()> {
         let now = Utc::now();
         self.db
             .execute(
@@ -51,7 +50,7 @@ impl BackupHistoryManager {
         Ok(())
     }
 
-    pub fn get_last_successful_entry(&mut self) -> Result<Option<DateTime<Utc>>> {
+    pub fn get_last_successful_entry(&self) -> Result<Option<DateTime<Utc>>> {
         let mut stmt = self
             .db
             .prepare(include_str!("sql/get_last_successful_history_entry.sql"))
@@ -73,7 +72,7 @@ mod tests {
     #[test]
     fn get_last_successful_entry_ignores_unfinished_backups() {
         let db = Connection::open_in_memory().unwrap();
-        let mut history = BackupHistoryManager { db };
+        let history = BackupHistoryManager { db };
         history.ensure_table().unwrap();
 
         let completed_backup_started_at = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();

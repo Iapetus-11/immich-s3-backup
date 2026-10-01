@@ -7,6 +7,7 @@ use clap::{
     value_parser,
 };
 use dotenvy::dotenv;
+use tracing::error;
 
 pub type Config = Arc<ConfigArgs>;
 
@@ -150,7 +151,12 @@ pub struct ConfigArgs {
 }
 
 pub fn load_config() -> Config {
-    let _ = dotenv();
+    if let Err(error) = dotenv()
+        && !error.not_found()
+    {
+        error!("Failed to load .env file: {error}");
+    }
+
     Arc::new(ConfigArgs::parse())
 }
 

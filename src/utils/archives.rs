@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    io::{self},
+    io,
     path::{Path, PathBuf},
 };
 
@@ -86,7 +86,9 @@ fn write_file_to_zip<ZW: io::Write + io::Seek>(
     zip_writer: &mut ZipWriter<ZW>,
     mut options: FileOptions<'_, ()>,
 ) -> Result<()> {
-    options = options.large_file(file_entry.metadata.len() >= ZIP64_BYTES_THR);
+    // AES and compression have overhead
+    const SIZE_MARGIN: u64 = 16 * 1024 * 1024;
+    options = options.large_file(file_entry.metadata.len() + SIZE_MARGIN >= ZIP64_BYTES_THR);
 
     let relative_entry_path = file_entry.path.strip_prefix(source_dir).with_context(|| {
         format!(

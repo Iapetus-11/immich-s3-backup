@@ -1,9 +1,8 @@
 use std::time::Duration;
 
-use anyhow::Result;
-use anyhow::{Context, bail};
+use anyhow::{Context, Result, bail};
 use chrono::Utc;
-use tokio::time::{self};
+use tokio::time;
 use tracing::{error, info};
 
 use crate::config::Config;
@@ -20,6 +19,8 @@ impl BackupScheduler {
     }
 
     pub async fn run_forever(self) {
+        const MAX_SLEEP: Duration = Duration::from_mins(15);
+
         loop {
             let duration_until_next_backup = match self.get_duration_until_next_backup() {
                 Ok(duration) => duration,
@@ -37,6 +38,10 @@ impl BackupScheduler {
                 "Waiting {} seconds until next backup...",
                 duration_until_next_backup.as_secs()
             );
+            if duration_until_next_backup > MAX_SLEEP {
+                time::sleep(MAX_SLEEP).await;
+                continue;
+            }
             time::sleep(duration_until_next_backup).await;
 
             if let Err(error) = runner::run(self.config.clone()).await {
@@ -46,7 +51,7 @@ impl BackupScheduler {
     }
 
     fn get_duration_until_next_backup(&self) -> Result<Duration> {
-        let mut history = BackupHistoryManager::new(self.config.clone())
+        let history = BackupHistoryManager::new(&self.config.history_file_path)
             .context("opening backup history manager")?;
 
         let last_backup_at = history
@@ -68,10 +73,8 @@ impl BackupScheduler {
             .to_std()
             .context("calculating time since last successful backup")?;
 
-        if duration_since_last_backup >= duration_between_backups {
-            return Ok(Duration::from_secs(5));
-        }
-
-        Ok(duration_between_backups - duration_since_last_backup)
+        Ok(duration_between_backups
+            .saturating_sub(duration_since_last_backup)
+            .max(Duration::from_secs(5)))
     }
 }

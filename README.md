@@ -13,7 +13,7 @@ Paste this under `services:`:
 ```yaml
   immich-backup:
     container_name: immich_backup
-    image: ghcr.io/iapetus-11/immich-cloudflare-backup:latest
+    image: ghcr.io/iapetus-11/immich-s3-backup:latest
     command: ["--forever"]
     env_file:
       - .env
@@ -25,7 +25,8 @@ Paste this under `services:`:
       - ${UPLOAD_LOCATION}:/data:ro
       - backup-history:/history
     depends_on:
-      - database
+      database:
+        condition: service_healthy
     restart: unless-stopped
 ```
 

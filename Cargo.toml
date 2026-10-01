@@ -2,6 +2,7 @@
 name = "immich_s3_backup"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.91"
 
 [dependencies]
 anyhow = { version = "1.0.104", default-features = false, features = ["std"] }
@@ -16,3 +17,14 @@ tokio = { version = "1.53.1", default-features = false, features = ["fs", "macro
 tracing = { version = "0.1.44", default-features = false, features = ["std"] }
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["ansi"] }
 zip = { version = "8.6.0", default-features = false, features = ["aes-crypto", "deflate-flate2-zlib-rs"] }
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
