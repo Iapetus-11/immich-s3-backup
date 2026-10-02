@@ -1,30 +1,44 @@
-use std::process;
+use std::{io::IsTerminal, process::ExitCode};
 
-use dotenvy::dotenv;
 use tracing::{Level, error};
 
-mod archive_utils;
-mod backup;
-mod recursive_dir_reader;
-mod uploader;
+use crate::config::load_config;
 
-// TODO: Zipping and uploading should occur at the same time... then need to clear disk as it's deleted
-// TODO: Parallelize uploading using worker system (mutex around vec of file upload paths?)
+mod backup;
+mod config;
+mod history;
+mod postgres;
+mod runner;
+mod s3_client;
+mod scheduler;
+mod utils;
 
 #[tokio::main]
-async fn main() {
-    tracing::subscriber::set_global_default(
-        tracing_subscriber::FmtSubscriber::builder()
-            .with_ansi(true)
-            .with_max_level(Level::INFO)
-            .finish(),
-    )
-    .unwrap();
-
-    let _ = dotenv();
-
-    if let Err(error) = backup::run().await {
-        error!("{error:?}");
-        process::exit(1);
+async fn main() -> ExitCode {
+    if let Err(error) = tracing_subscriber::FmtSubscriber::builder()
+        .with_ansi(std::io::stdout().is_terminal())
+        .with_max_level(Level::INFO)
+        .try_init()
+    {
+        eprintln!("Failed to initialize logging: {error}");
+        return ExitCode::FAILURE;
     }
+
+    let config = load_config();
+
+    if let Err(error) = backup::cleanup_stale_backup_folders().await {
+        error!("Failed to clean up stale backup files: {error:#}");
+    }
+
+    if config.forever {
+        scheduler::BackupScheduler::new(config).run_forever().await;
+        return ExitCode::SUCCESS;
+    }
+
+    if let Err(error) = runner::run(config).await {
+        error!("Backup failed: {error:?}");
+        return ExitCode::FAILURE;
+    }
+
+    ExitCode::SUCCESS
 }

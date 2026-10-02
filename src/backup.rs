@@ -1,231 +1,371 @@
+use crate::{
+    config::Config,
+    postgres::run_pg_dumpall,
+    s3_client::initialize_s3_client,
+    utils::{
+        archives::{PackZipArgs, pack_zip},
+        dir_reader::{FileEntry, read_dir_recursive},
+        uploader::S3Uploader,
+    },
+};
+
 use std::{
     env,
     path::{Path, PathBuf},
+    pin::pin,
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use chrono::Utc;
+use futures_util::{Stream, StreamExt};
 use tokio::{
     fs::{self, File},
-    process::Command,
-    task::{JoinSet, block_in_place},
-};
-use tracing::info;
-
-use crate::{
-    archive_utils::pack_zip, recursive_dir_reader::RecursiveDirReader, uploader::S3Uploader,
+    task::JoinSet,
 };
 
-pub const DB_BACKUP_FILENAME: &str = "db-backup.sql";
+use async_stream::try_stream;
+use tracing::{error, info};
 
-/// Creates a dump of the immich database and zips it, returning the path to that zip file
-/// Reference https://docs.immich.app/administration/backup-and-restore/#database
-async fn backup_immich_db(backup_folder: &Path, s3_uploader: &S3Uploader) -> Result<()> {
-    info!("Dumping immich database...");
+fn backup_root() -> PathBuf {
+    env::temp_dir().join("immich-backups")
+}
 
-    let db_host = env::var("DB_HOST").context("Missing env DB_HOST")?;
-    let db_username = env::var("DB_USERNAME").context("Missing env DB_USERNAME")?;
-    let db_password = env::var("DB_PASSWORD").context("Missing env DB_PASSWORD")?;
+pub async fn cleanup_stale_backup_folders() -> Result<()> {
+    let backup_root = backup_root();
 
-    let mut dump_file_path = PathBuf::from(backup_folder);
-    dump_file_path.push(DB_BACKUP_FILENAME);
-    let dump_file = File::create(&dump_file_path)
-        .await
-        .with_context(|| format!("Creating {DB_BACKUP_FILENAME}"))?;
-
-    let pg_dumpall_output = Command::new("pg_dumpall")
-        .arg("--clean")
-        .arg("--if-exists")
-        .arg(format!("--host={db_host}"))
-        .arg(format!("--username={db_username}"))
-        .env("PGPASSWORD", db_password)
-        .stdout(dump_file.into_std().await)
-        .status()
-        .await
-        .with_context(|| "Running pg_dumpall".to_string())?;
-
-    if !pg_dumpall_output.success() {
-        bail!("Failed to run pg_dumpall");
+    match fs::remove_dir_all(&backup_root).await {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!(
+                    "removing stale temporary backup directories from {}",
+                    backup_root.display()
+                )
+            });
+        }
     }
 
-    let dump_file_zip_name = format!("{DB_BACKUP_FILENAME}.zip");
-    let dump_file_zip_path = dump_file_path.with_file_name(&dump_file_zip_name);
-    pack_zip(&[&dump_file_path], &dump_file_zip_path).context("Zipping database dump")?;
+    Ok(())
+}
 
-    fs::remove_file(&dump_file_path)
+pub async fn backup_database_and_folders(config: &Config) -> Result<()> {
+    let backup_name = Utc::now().format("%Y-%m-%d_%H-%M-%S").to_string();
+    info!("Starting immich backup {backup_name}");
+    let backup_folder = backup_root().join(&backup_name);
+
+    fs::create_dir_all(&backup_folder)
         .await
-        .with_context(|| format!("Removing {dump_file_path:?}"))?;
+        .with_context(|| format!("creating backup directory {}", backup_folder.display()))?;
+
+    let s3_client = initialize_s3_client(config);
+    let s3_uploader = S3Uploader::new(
+        s3_client,
+        config.upload_bucket_name.clone(),
+        backup_name.clone(),
+        config.upload_chunk_size_bytes,
+        config.upload_chunk_concurrency,
+    );
+
+    let backup_result: Result<()> = async {
+        dump_and_backup_immich_db(config, &backup_folder, &s3_uploader)
+            .await
+            .context("backing up Immich database")?;
+
+        backup_all_immich_folders(config, &backup_folder, &s3_uploader)
+            .await
+            .context("backing up Immich folders")?;
+
+        Ok(())
+    }
+    .await;
+
+    if let Err(error) = fs::remove_dir_all(&backup_folder).await {
+        error!(
+            path = %backup_folder.display(),
+            "Failed to remove temporary backup directory: {error}"
+        );
+    }
+
+    backup_result?;
+
+    info!(backup_name, "Backup files uploaded successfully");
+
+    Ok(())
+}
+
+async fn dump_and_backup_immich_db(
+    config: &Config,
+    backup_folder: &Path,
+    s3_uploader: &S3Uploader,
+) -> Result<()> {
+    const DB_BACKUP_FILENAME: &str = "db-backup.sql";
+
+    info!("Dumping Immich database");
+
+    let dump_file_path = backup_folder.join(DB_BACKUP_FILENAME);
+    let dump_file = File::create(&dump_file_path)
+        .await
+        .with_context(|| format!("creating dump output file {DB_BACKUP_FILENAME}"))?;
+
+    run_pg_dumpall(config, dump_file).await?;
+
+    let dump_file_entry = FileEntry::from_path(dump_file_path.clone())
+        .await
+        .context("getting database dump file entry")?;
+
+    let dump_zip_name = format!("{DB_BACKUP_FILENAME}.zip");
+    let dump_zip_path = dump_file_path.with_file_name(&dump_zip_name);
+    let dump_zip_file = File::create(&dump_zip_path)
+        .await
+        .with_context(|| format!("creating zip output file {}", dump_zip_path.display()))?;
+
+    pack_zip(PackZipArgs {
+        source_dir: backup_folder.to_path_buf(),
+        file_entries: vec![dump_file_entry],
+        output_file: dump_zip_file,
+        compress: true,
+        password: config.archive_password.clone(),
+    })
+    .await
+    .context("zipping database dump")?;
+
+    if let Err(error) = fs::remove_file(&dump_file_path).await {
+        error!(
+            path = %dump_file_path.display(),
+            "Failed to remove database dump file: {error}"
+        );
+    }
+
+    let dump_file_zip_entry = FileEntry::from_path(dump_zip_path.clone())
+        .await
+        .context("getting database dump archive file entry")?;
 
     s3_uploader
-        .upload_file(&dump_file_zip_path, &dump_file_zip_name)
+        .upload_file(
+            &dump_file_zip_entry,
+            &dump_zip_name,
+            Some("application/zip".to_string()),
+        )
         .await
-        .context("Uploading database dump")?;
+        .context("uploading database dump")?;
 
-    fs::remove_file(&dump_file_zip_path)
-        .await
-        .with_context(|| format!("Removing {dump_file_zip_path:?}"))?;
+    if let Err(error) = fs::remove_file(&dump_zip_path).await {
+        error!(
+            path = %dump_zip_path.display(),
+            "Failed to remove uploaded database dump archive: {error}"
+        );
+    }
+
+    Ok(())
+}
+
+async fn backup_all_immich_folders(
+    config: &Config,
+    backup_output_folder: &Path,
+    s3_uploader: &S3Uploader,
+) -> Result<()> {
+    const FOLDERS_TO_BACKUP: &[&str] = &["library", "upload", "profile"];
+
+    for target_folder_name in FOLDERS_TO_BACKUP {
+        backup_immich_folder(
+            config,
+            backup_output_folder,
+            target_folder_name,
+            s3_uploader,
+        )
+        .await?;
+    }
 
     Ok(())
 }
 
 async fn backup_immich_folder(
+    config: &Config,
     backup_output_folder: &Path,
-    upload_location: &Path,
     target_folder_name: &str,
-    max_batch_size_bytes: u64,
-    max_concurrent_uploads: usize,
     s3_uploader: &S3Uploader,
 ) -> Result<()> {
-    let mut join_set = JoinSet::new();
+    let target_folder_path = config.upload_location.join(target_folder_name);
 
-    let mut target_folder_path = upload_location.to_path_buf();
-    target_folder_path.push(target_folder_name);
+    let mut batch_iterator = pin!(
+        iter_folder_batches(target_folder_path.clone(), config.batch_max_size_bytes).enumerate()
+    );
 
-    let mut batch_idx = 0_usize;
-    let mut batch_files: Vec<PathBuf> = vec![];
-    let mut batch_size_bytes = 0_u64;
+    let mut upload_tasks = JoinSet::<Result<()>>::new();
 
-    let mut dir_reader = RecursiveDirReader::new(&target_folder_path);
-    let mut has_more_files = true;
-    while has_more_files {
-        let file_path = dir_reader.next().await;
-        has_more_files = file_path.is_some();
-
-        if let Some(file_path) = file_path {
-            let file_path = file_path
-                .with_context(|| format!("Reading file entry from {target_folder_path:?}"))?;
-            let file_metadata = file_path
-                .metadata()
-                .with_context(|| format!("Reading metadata for {file_path:?}"))?;
-
-            batch_size_bytes += file_metadata.len();
-            batch_files.push(file_path);
-        }
-
-        if !has_more_files || batch_size_bytes >= max_batch_size_bytes {
-            batch_idx += 1;
-            info!(
-                "Zipping up {target_folder_path:?} batch {batch_idx} ({} files)...",
-                batch_files.len()
-            );
-
-            let zip_output_name = format!("{target_folder_name}-{batch_idx}.zip");
-            let mut zip_output_path = backup_output_folder.to_path_buf();
-            zip_output_path.push(&zip_output_name);
-
-            block_in_place(|| {
-                pack_zip(
-                    &batch_files.iter().map(|p| p.as_path()).collect::<Vec<_>>(),
-                    &zip_output_path,
+    let uploads_result: Result<()> = async {
+        while let Some((batch_idx, batch_files_result)) = batch_iterator.next().await {
+            let batch_files = batch_files_result.with_context(|| {
+                format!(
+                    "getting batch {batch_idx} for {}",
+                    target_folder_path.display()
                 )
-            })
-            .with_context(|| format!("Zipping {target_folder_path:?} (batch {batch_idx})"))?;
+            })?;
 
-            let batch_zip_size_bytes = zip_output_path
-                .metadata()
-                .with_context(|| format!("Getting zip metadata for batch {batch_idx}"))?
-                .len();
-            info!("Finished zipping batch {batch_idx} ({batch_zip_size_bytes} bytes)");
+            if upload_tasks.len() >= config.upload_file_concurrency {
+                info!(
+                    "Waiting on previous upload to complete before packing {target_folder_name} batch {batch_idx}..."
+                );
 
-            if join_set.len() >= max_concurrent_uploads {
-                info!("Max concurrent uploads reached, waiting for a previous upload to finish...");
-                join_set
-                    .join_next()
-                    .await
-                    .unwrap()
-                    .context("Upload batch background task")??;
+                if let Some(next_upload_result) = upload_tasks.join_next().await {
+                    next_upload_result.context("waiting for upload task")??;
+                }
             }
 
-            join_set.spawn({
-                let s3_uploader = s3_uploader.clone();
-                let target_folder_name = target_folder_name.to_string();
+            let batch_zip_file_entry = create_batch_zip(
+                config,
+                &target_folder_path,
+                target_folder_name,
+                batch_idx,
+                batch_files,
+                backup_output_folder,
+            )
+            .await
+            .with_context(|| format!("packing batch {batch_idx} archive"))?;
 
-                async move {
-                    s3_uploader
-                        .upload_file(
-                            &zip_output_path,
-                            &format!("{target_folder_name}/{zip_output_name}"),
-                        )
-                        .await
-                        .with_context(|| format!("Upload batch {batch_idx}"))?;
+            spawn_batch_upload_task(
+                s3_uploader.clone(),
+                &mut upload_tasks,
+                target_folder_name.to_string(),
+                batch_idx,
+                batch_zip_file_entry,
+            );
+        }
 
-                    fs::remove_file(&zip_output_path)
-                        .await
-                        .with_context(|| format!("Deleting {zip_output_path:?}"))?;
+        while let Some(next_upload_result) = upload_tasks.join_next().await {
+            next_upload_result.context("waiting for upload task")??;
+        }
 
-                    Ok(()) as Result<()>
-                }
-            });
+        Ok(())
+    }
+    .await;
 
-            batch_files.clear();
-            batch_size_bytes = 0;
+    if uploads_result.is_err() {
+        upload_tasks.shutdown().await;
+    }
+
+    uploads_result
+}
+
+fn spawn_batch_upload_task(
+    s3_uploader: S3Uploader,
+    upload_tasks: &mut JoinSet<Result<()>>,
+    target_folder_name: String,
+    batch_idx: usize,
+    batch_zip_file_entry: FileEntry,
+) {
+    upload_tasks.spawn(async move {
+        s3_uploader
+            .upload_file(
+                &batch_zip_file_entry,
+                &format!("{target_folder_name}/{batch_idx}.zip"),
+                Some("application/zip".to_string()),
+            )
+            .await
+            .with_context(|| format!("uploading batch {batch_idx}"))?;
+
+        if let Err(error) = fs::remove_file(&batch_zip_file_entry.path).await {
+            error!(
+                folder = target_folder_name,
+                batch = batch_idx,
+                path = %batch_zip_file_entry,
+                "Failed to remove uploaded batch archive: {error}"
+            );
+        }
+
+        Ok(())
+    });
+}
+
+fn iter_folder_batches(
+    target_folder_path: PathBuf,
+    batch_max_size_bytes: u64,
+) -> impl Stream<Item = Result<Vec<FileEntry>>> {
+    try_stream! {
+        let mut batch_files: Vec<FileEntry> = vec![];
+        let mut batch_size_bytes = 0_u64;
+
+        let mut dir_reader = pin!(read_dir_recursive(target_folder_path.clone()));
+
+        while let Some(file_entry_result) = dir_reader.next().await {
+            let file_entry = file_entry_result.with_context(|| {
+                format!("reading file entry from {}", target_folder_path.display())
+            })?;
+            let file_size = file_entry.metadata.len();
+
+            if !batch_files.is_empty()
+                && batch_size_bytes + file_size >= batch_max_size_bytes
+            {
+                yield std::mem::take(&mut batch_files);
+                batch_size_bytes = 0;
+            }
+
+            batch_files.push(file_entry);
+            batch_size_bytes += file_size;
+        }
+
+        if !batch_files.is_empty() {
+            yield batch_files;
         }
     }
-
-    while let Some(next_task) = join_set.join_next().await {
-        next_task.context("Upload batch background task")??;
-    }
-
-    Ok(())
 }
 
-/// Zips up immich files (containing media library, profile pictures, and more)
-/// Reference https://docs.immich.app/administration/backup-and-restore/#filesystem
-async fn backup_immich_files(backup_output_folder: &Path, s3_uploader: &S3Uploader) -> Result<()> {
-    info!("Zipping immich data...");
+async fn create_batch_zip(
+    config: &Config,
+    target_folder_path: &Path,
+    target_folder_name: &str,
+    batch_idx: usize,
+    file_entries: Vec<FileEntry>,
+    backup_output_folder: &Path,
+) -> Result<FileEntry> {
+    info!(
+        folder = target_folder_name,
+        batch = batch_idx,
+        files = file_entries.len(),
+        "Zipping backup batch..."
+    );
 
-    const FOLDERS_TO_BACKUP: &[&str] = &["library", "upload", "profile"];
+    let output_path = backup_output_folder.join(format!("{batch_idx}.zip"));
+    let output_file = File::create(&output_path)
+        .await
+        .with_context(|| format!("creating zip output file {}", output_path.display()))?;
 
-    let upload_location = env::var("UPLOAD_LOCATION").context("Missing env UPLOAD_LOCATION")?;
-    let upload_location = Path::new(&upload_location);
-
-    let max_batch_size_bytes = env::var("BACKUP_BATCH_SIZE_BYTES")
-        .context("Missing env BACKUP_BATCH_SIZE_BYTES")?
-        .parse::<u64>()
-        .context("Parsing BACKUP_BATCH_SIZE_BYTES as u64")?;
-
-    let max_concurrent_uploads = env::var("BACKUP_MAX_CONCURRENT_UPLOADS")
-        .context("Missing env BACKUP_MAX_CONCURRENT_UPLOADS")?
-        .parse::<usize>()
-        .context("Parsing BACKUP_MAX_CONCURRENT_UPLOADS as usize")?;
-
-    for target_folder_name in FOLDERS_TO_BACKUP {
-        backup_immich_folder(
-            backup_output_folder,
-            upload_location,
-            target_folder_name,
-            max_batch_size_bytes,
-            max_concurrent_uploads,
-            s3_uploader,
+    let zip_result = pack_zip(PackZipArgs {
+        source_dir: config.upload_location.clone(),
+        file_entries,
+        output_file,
+        compress: false,
+        password: config.archive_password.to_string(),
+    })
+    .await
+    .with_context(|| {
+        format!(
+            "zipping {} (batch {batch_idx})",
+            target_folder_path.display()
         )
-        .await?
+    });
+
+    if let Err(zip_error) = zip_result {
+        if let Err(error) = fs::remove_file(&output_path).await {
+            error!(
+                batch = batch_idx,
+                path = %output_path.display(),
+                "Failed to remove incomplete batch archive: {error}"
+            );
+        }
+        return Err(zip_error);
     }
 
-    Ok(())
-}
-
-pub async fn run() -> Result<()> {
-    info!("Backing up Immich...");
-
-    let backup_name = Utc::now().format("%Y-%m-%d_%H-%M-%S").to_string();
-    let mut backup_folder = env::temp_dir();
-    backup_folder.extend(["backups", &backup_name]);
-
-    fs::create_dir_all(&backup_folder)
+    let output_file_entry = FileEntry::from_path(output_path)
         .await
-        .with_context(|| format!("Creating dir {}", backup_folder.to_string_lossy()))?;
+        .with_context(|| format!("getting file entry for batch {batch_idx} archive"))?;
 
-    let s3_uploader = S3Uploader::new_from_env(backup_name.clone()).await?;
+    info!(
+        folder = target_folder_name,
+        batch = batch_idx,
+        "Finished zipping backup batch"
+    );
 
-    backup_immich_db(&backup_folder, &s3_uploader)
-        .await
-        .context("Backing up immich DB")?;
-
-    backup_immich_files(&backup_folder, &s3_uploader)
-        .await
-        .context("Backing up immich files")?;
-
-    info!("Done!");
-
-    Ok(())
+    Ok(output_file_entry)
 }

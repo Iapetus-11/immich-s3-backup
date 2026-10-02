@@ -1,4 +1,4 @@
-FROM rust:1.91.1-alpine3.23 AS build
+FROM rust:1.98.1-alpine3.24 AS build
 
 WORKDIR /immich-s3-backup
 
@@ -16,12 +16,20 @@ COPY src/ ./src/
 RUN cargo build --frozen --profile release
 
 
-FROM alpine:3.23 AS runner
+FROM alpine:3.24 AS runner
 
 WORKDIR /immich-s3-backup
 
-RUN apk add --no-cache postgresql-client zip
+RUN apk add --no-cache postgresql-client
 
-COPY --from=build /immich-s3-backup/target/release/immich-s3-backup .
+RUN addgroup -S immich-s3-backup \
+    && adduser -S -D -H -G immich-s3-backup immich-s3-backup
+
+RUN mkdir -p /history \
+    && chown immich-s3-backup:immich-s3-backup /immich-s3-backup /history
+
+COPY --from=build --chown=immich-s3-backup:immich-s3-backup /immich-s3-backup/target/release/immich-s3-backup .
+
+USER immich-s3-backup
 
 ENTRYPOINT ["./immich-s3-backup"]
