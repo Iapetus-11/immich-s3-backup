@@ -1,0 +1,68 @@
+name: Publish Docker Image
+
+on:
+  workflow_run:
+    workflows: [Checks]
+    types: [completed]
+    branches: [main]
+
+concurrency:
+  group: publish-docker-image
+
+jobs:
+  publish:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Prepare publish
+        id: publish
+        run: |
+          set -euo pipefail
+
+          version="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')"
+          image_name="ghcr.io/${GITHUB_REPOSITORY,,}"
+
+          required=true
+          if docker manifest inspect "${image_name}:${version}" >/dev/null 2>&1; then
+            echo "Image ${image_name}:${version} already exists; skipping."
+            required=false
+          fi
+
+          echo "Version: ${version}"
+          echo "Publish required: ${required}"
+
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "image_name=${image_name}" >> "$GITHUB_OUTPUT"
+          echo "required=${required}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        if: steps.publish.outputs.required == 'true'
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and publish Docker image
+        if: steps.publish.outputs.required == 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ steps.publish.outputs.image_name }}:${{ steps.publish.outputs.version }}
+            ${{ steps.publish.outputs.image_name }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
