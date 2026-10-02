@@ -1,19 +1,17 @@
 name: Publish Release
 
 on:
-  push:
+  workflow_run:
+    workflows: [Checks]
+    types: [completed]
     branches: [main]
 
 concurrency:
-  group: publish-release-${{ github.ref }}
-  cancel-in-progress: false
+  group: publish-release
 
 jobs:
-  checks:
-    uses: ./.github/workflows/checks.yml
-
   publish:
-    needs: checks
+    if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -21,6 +19,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Prepare release
         id: release
@@ -74,9 +74,10 @@ jobs:
         if: steps.release.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
           VERSION: ${{ steps.release.outputs.version }}
         run: |
           gh release create "v${VERSION}" \
-            --target "$GITHUB_SHA" \
+            --target "$RELEASE_SHA" \
             --title "v${VERSION}" \
             --generate-notes

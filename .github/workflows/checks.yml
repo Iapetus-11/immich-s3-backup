@@ -1,10 +1,6 @@
 name: Checks
 
-on:
-  push:
-    branches-ignore: [main]
-  pull_request:
-  workflow_call:
+on: [push, pull_request]
 
 jobs:
   checks:
@@ -27,7 +23,7 @@ jobs:
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
       - name: Check formatting
-        uses: actions-rust-lang/rustfmt@v1
+        run: cargo fmt --all -- --check
 
       - uses: taiki-e/install-action@v2
         with:
@@ -40,14 +36,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v7
-
       - uses: docker/setup-buildx-action@v4
 
       - name: Build Docker image
         uses: docker/build-push-action@v7
         with:
-          context: .
           file: ./Dockerfile
           push: false
           cache-from: type=gha
