@@ -133,7 +133,9 @@ impl S3Uploader {
         }
 
         let upload_part_futures = stream::iter(1..=part_count)
-            .map(|part_idx| self.upload_file_multipart_part(file, key, upload_id, part_idx))
+            .map(|part_idx| {
+                self.upload_file_multipart_part(file, key, upload_id, part_idx, part_count)
+            })
             .buffered(self.chunk_concurrency as usize);
 
         upload_part_futures.try_collect().await
@@ -145,12 +147,17 @@ impl S3Uploader {
         key: &str,
         upload_id: &str,
         part_idx: i32,
+        part_count: i32,
     ) -> Result<CompletedPart> {
         let offset = (part_idx as u64 - 1) * self.chunk_size_bytes;
         let remaining_bytes = file.metadata.len() - offset;
         let byte_stream_length = Length::Exact(self.chunk_size_bytes.min(remaining_bytes));
 
-        info!(key, part = part_idx, "Uploading file part...");
+        info!(
+            key,
+            part = format_args!("{}/{part_count}", part_idx + 1),
+            "Uploading file part..."
+        );
 
         let byte_stream = ByteStream::read_from()
             .path(&file.path)
@@ -176,7 +183,11 @@ impl S3Uploader {
             .e_tag()
             .with_context(|| format!("upload response for part {part_idx} is missing an ETag"))?;
 
-        info!(key, part = part_idx, "Done uploading file part");
+        info!(
+            key,
+            part = format_args!("{}/{part_count}", part_idx + 1),
+            "Done uploading file part"
+        );
 
         Ok(CompletedPart::builder()
             .e_tag(e_tag)
