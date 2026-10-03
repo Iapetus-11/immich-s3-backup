@@ -150,6 +150,8 @@ impl S3Uploader {
         let remaining_bytes = file.metadata.len() - offset;
         let byte_stream_length = Length::Exact(self.chunk_size_bytes.min(remaining_bytes));
 
+        info!(key, part = part_idx, "Uploading file part...");
+
         let byte_stream = ByteStream::read_from()
             .path(&file.path)
             .offset(offset)
@@ -173,6 +175,8 @@ impl S3Uploader {
         let e_tag = upload_response
             .e_tag()
             .with_context(|| format!("upload response for part {part_idx} is missing an ETag"))?;
+
+        info!(key, part = part_idx, "Done uploading file part");
 
         Ok(CompletedPart::builder()
             .e_tag(e_tag)

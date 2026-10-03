@@ -101,7 +101,7 @@ async fn dump_and_backup_immich_db(
 ) -> Result<()> {
     const DB_BACKUP_FILENAME: &str = "db-backup.sql";
 
-    info!("Dumping Immich database");
+    info!("Dumping Immich database...");
 
     let dump_file_path = backup_folder.join(DB_BACKUP_FILENAME);
     let dump_file = File::create(&dump_file_path)
@@ -205,7 +205,9 @@ async fn backup_immich_folder(
 
             if upload_tasks.len() >= config.upload_file_concurrency {
                 info!(
-                    "Waiting on previous upload to complete before packing {target_folder_name} batch {batch_idx}..."
+                    folder = target_folder_name,
+                    batch = batch_idx,
+                    "Waiting on previous upload to complete before packing batch..."
                 );
 
                 if let Some(next_upload_result) = upload_tasks.join_next().await {
@@ -326,7 +328,7 @@ async fn create_batch_zip(
         "Zipping backup batch..."
     );
 
-    let output_path = backup_output_folder.join(format!("{batch_idx}.zip"));
+    let output_path = backup_output_folder.join(format!("{target_folder_name}-{batch_idx}.zip"));
     let output_file = File::create(&output_path)
         .await
         .with_context(|| format!("creating zip output file {}", output_path.display()))?;

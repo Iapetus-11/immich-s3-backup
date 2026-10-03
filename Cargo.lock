@@ -1151,7 +1151,7 @@ dependencies = [
 
 [[package]]
 name = "immich-s3-backup"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-stream",
