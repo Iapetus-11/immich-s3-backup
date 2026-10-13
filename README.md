@@ -4,6 +4,9 @@ Backs up an Immich instance (database dump + upload library) to Cloudflare R2 or
 
 It reads the same `DB_*` and `UPLOAD_LOCATION` variables as Immich, so it drops into an existing Immich Docker Compose setup with no changes to Immich's own configuration.
 
+> [!WARNING]
+> This project is not finished. There is no process to restore from a backup yet, though it will be added in the future. The uploaded file structure is also not stable.
+
 ## Setup
 
 ### 1. Add the service to Immich's `docker-compose.yml`
