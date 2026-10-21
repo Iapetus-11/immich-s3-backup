@@ -64,7 +64,7 @@ fn blocking_pack_zip(
     Ok(())
 }
 
-fn get_file_options(compress: bool, password: &str) -> FileOptions<'_, ()> {
+fn get_file_options(compress: bool, password: &str) -> FileOptions<'_, '_, ()> {
     let mut options = FileOptions::default();
 
     if compress {
@@ -84,7 +84,7 @@ fn write_file_to_zip<ZW: io::Write + io::Seek>(
     source_dir: &Path,
     file_entry: &FileEntry,
     zip_writer: &mut ZipWriter<ZW>,
-    mut options: FileOptions<'_, ()>,
+    mut options: FileOptions<'_, '_, ()>,
 ) -> Result<()> {
     // AES and compression have overhead
     const SIZE_MARGIN: u64 = 16 * 1024 * 1024;
@@ -107,4 +107,44 @@ fn write_file_to_zip<ZW: io::Write + io::Seek>(
         .with_context(|| format!("copying data from {file_entry} into zip"))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{Cursor, Read, Write};
+
+    use zip::{CompressionMethod, ZipArchive};
+
+    use super::*;
+
+    fn assert_encrypted_archive_round_trip(compress: bool, expected_method: CompressionMethod) {
+        let password = "example-backup-password";
+        let contents = b"Example backup contents";
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        writer
+            .start_file("backup.txt", get_file_options(compress, password))
+            .unwrap();
+        writer.write_all(contents).unwrap();
+        let mut archive = ZipArchive::new(writer.finish().unwrap()).unwrap();
+
+        assert!(archive.by_name("backup.txt").is_err());
+        let mut entry = archive
+            .by_name_decrypt("backup.txt", password.as_bytes())
+            .unwrap();
+        let mut restored = Vec::new();
+        entry.read_to_end(&mut restored).unwrap();
+
+        assert_eq!(entry.compression(), expected_method);
+        assert_eq!(restored, contents);
+    }
+
+    #[test]
+    fn compressed_archives_remain_encrypted_and_readable() {
+        assert_encrypted_archive_round_trip(true, CompressionMethod::Deflated);
+    }
+
+    #[test]
+    fn uncompressed_archives_remain_encrypted_and_readable() {
+        assert_encrypted_archive_round_trip(false, CompressionMethod::Stored);
+    }
 }
